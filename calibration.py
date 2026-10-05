@@ -2,28 +2,34 @@
 
 from __future__ import annotations
 
-import subprocess
-import sys
+from array import array
+import math
+import os
 import time
 import tkinter as tk
 from tkinter import messagebox
 from typing import Callable, Optional
 
+os.environ["PYGAME_HIDE_SUPPORT_PROMPT"] = "1"
+import pygame
+
 
 class Calibration:
     """操作用・表示用の2画面でカウントダウンを制御する。"""
 
-    DEFAULT_SECONDS = 120
+    DEFAULT_SECONDS = 60
     MIN_SECONDS = 0
-    MAX_SECONDS = 120
+    MAX_SECONDS = 60
     MIN_VOLUME = 0
     MAX_VOLUME = 100
-    DEFAULT_TICK_VOLUME = 100
-    DEFAULT_FINISHED_VOLUME = 100
+    DEFAULT_TICK_VOLUME = 30	
+    DEFAULT_FINISHED_VOLUME = 30
     TICK_FREQUENCY_HZ = 1000
-    TICK_DURATION_MS = 70
+    TICK_DURATION_MS = 150
     FINISHED_FREQUENCY_HZ = 200
     FINISHED_DURATION_MS = 900
+    SAMPLE_RATE = 44_100
+    MIXER_BUFFER_SIZE = 512
     NORMAL_FOREGROUND = "white"
     WARNING_FOREGROUND = "yellow"
     NORMAL_BACKGROUND = "black"
@@ -42,6 +48,11 @@ class Calibration:
         self._remaining_seconds = self.DEFAULT_SECONDS
         self._finished_announced = False
         self._paused = False
+        self._audio_available = False
+        self._tick_sound: Optional[pygame.mixer.Sound] = None
+        self._finished_sound: Optional[pygame.mixer.Sound] = None
+        self._silence_sound: Optional[pygame.mixer.Sound] = None
+        self._silence_channel: Optional[pygame.mixer.Channel] = None
 
         self.root = root if root is not None else tk.Tk()
         self.root.title("キャリブレーション操作")
@@ -49,6 +60,7 @@ class Calibration:
         self.root.option_add("*Font", "{Yu Gothic UI} 12")
         self.root.protocol("WM_DELETE_WINDOW", self.close)
 
+        self._initialize_audio()
         self._build_control_window()
         self._build_display_window()
         self._show_remaining(self._remaining_seconds)
@@ -103,14 +115,14 @@ class Calibration:
 
     @classmethod
     def parse_seconds(cls, value: str) -> int:
-        """入力文字列を検証し、0～120の整数秒として返す。"""
+        """入力文字列を検証し、0～60の整数秒として返す。"""
         try:
             seconds = int(value.strip())
         except (AttributeError, ValueError):
-            raise ValueError("カウントダウン時間は0～120の整数で入力してください。") from None
+            raise ValueError("カウントダウン時間は0～60の整数で入力してください。") from None
 
         if not cls.MIN_SECONDS <= seconds <= cls.MAX_SECONDS:
-            raise ValueError("カウントダウン時間は0～120の範囲で入力してください。")
+            raise ValueError("カウントダウン時間は0～60の範囲で入力してください。")
         return seconds
 
     @staticmethod
@@ -187,7 +199,7 @@ class Calibration:
         self.pause_button.configure(state=tk.DISABLED if paused else tk.NORMAL)
 
     def reset(self) -> None:
-        """タイマーを停止し、既定の120秒表示に戻す。"""
+        """タイマーを停止し、既定の60秒表示に戻す。"""
         self._cancel_scheduled_update()
         self._running = False
         self._end_time = None
@@ -254,67 +266,68 @@ class Calibration:
                 background=self.NORMAL_BACKGROUND, foreground=foreground
             )
 
+    def _initialize_audio(self) -> None:
+        """出力デバイスを一度だけ開き、Bluetooth音声経路を維持する。"""
+        try:
+            if pygame.mixer.get_init() is None:
+                pygame.mixer.init(
+                    frequency=self.SAMPLE_RATE,
+                    size=-16,
+                    channels=1,
+                    buffer=self.MIXER_BUFFER_SIZE,
+                )
+            self._tick_sound = self._create_tone(
+                self.TICK_FREQUENCY_HZ, self.TICK_DURATION_MS, waveform="square"
+            )
+            self._finished_sound = self._create_tone(
+                self.FINISHED_FREQUENCY_HZ,
+                self.FINISHED_DURATION_MS,
+                waveform="square",
+            )
+            # 無音をループ再生してBluetooth出力の再接続・音量ランプを防ぐ。
+            self._silence_sound = pygame.mixer.Sound(
+                buffer=array("h", [0]) * self.SAMPLE_RATE
+            )
+            self._silence_channel = self._silence_sound.play(loops=-1)
+            self._audio_available = True
+        except pygame.error:
+            self._audio_available = False
+
+    def _create_tone(
+        self, frequency_hz: int, duration_ms: int, *, waveform: str
+    ) -> pygame.mixer.Sound:
+        sample_count = int(self.SAMPLE_RATE * duration_ms / 1000)
+        samples = array("h")
+        for index in range(sample_count):
+            wave = math.sin(2 * math.pi * frequency_hz * index / self.SAMPLE_RATE)
+            if waveform == "square":
+                wave = 1 if wave >= 0 else -1
+            samples.append(int(wave * 32767))
+        return pygame.mixer.Sound(buffer=samples.tobytes())
+
     def _play_tick_sound(self) -> None:
         """カウントが1減るごとに約1000Hzの短音を鳴らす。"""
-        self._play_tone(
-            self.TICK_FREQUENCY_HZ,
-            self.TICK_DURATION_MS,
-            self.tick_volume_var.get(),
-        )
+        self._play_sound(self._tick_sound, self.tick_volume_var.get())
 
     def _announce_finished(self) -> None:
         """終了を一度だけブザー音で通知する。"""
         if self._finished_announced:
             return
         self._finished_announced = True
-        self._play_tone(
-            self.FINISHED_FREQUENCY_HZ,
-            self.FINISHED_DURATION_MS,
-            self.finished_volume_var.get(),
-            waveform="square",
-        )
+        self._play_sound(self._finished_sound, self.finished_volume_var.get())
 
-    def _play_tone(
-        self,
-        frequency_hz: int,
-        duration_ms: int,
-        volume: int,
-        *,
-        waveform: str = "sine",
+    def _play_sound(
+        self, sound: Optional[pygame.mixer.Sound], volume: int
     ) -> None:
-        """指定した周波数・時間・音量のPCM音をWindowsスピーカーで再生する。"""
-        if sys.platform != "win32":
+        """常駐ミキサー上で生成済みPCM音を再生する。"""
+        if not self._audio_available or sound is None:
             return
-
         volume = self.parse_volume(volume)
-        command = (
-            f"$frequency = {frequency_hz}; $duration = {duration_ms}; $volume = {volume}; "
-            "$sampleRate = 44100; $sampleCount = [int]($sampleRate * $duration / 1000); "
-            "$stream = New-Object System.IO.MemoryStream; "
-            "$writer = New-Object System.IO.BinaryWriter($stream); "
-            "$writer.Write([Text.Encoding]::ASCII.GetBytes('RIFF')); "
-            "$writer.Write([int](36 + $sampleCount * 2)); "
-            "$writer.Write([Text.Encoding]::ASCII.GetBytes('WAVEfmt ')); "
-            "$writer.Write([int]16); $writer.Write([int16]1); $writer.Write([int16]1); "
-            "$writer.Write([int]$sampleRate); $writer.Write([int]($sampleRate * 2)); "
-            "$writer.Write([int16]2); $writer.Write([int16]16); "
-            "$writer.Write([Text.Encoding]::ASCII.GetBytes('data')); "
-            "$writer.Write([int]($sampleCount * 2)); "
-            "for ($i = 0; $i -lt $sampleCount; $i++) { "
-            "$wave = [Math]::Sin(2 * [Math]::PI * $frequency * $i / $sampleRate); "
-            f"if ('{waveform}' -eq 'square') {{ if ($wave -ge 0) {{ $wave = 1 }} else {{ $wave = -1 }} }}; "
-            "$sample = [int16]($wave * 32767 * $volume / 100); "
-            "$writer.Write($sample) }; $writer.Flush(); $stream.Position = 0; "
-            "$player = [System.Media.SoundPlayer]::new($stream); $player.PlaySync()"
-        )
         try:
-            subprocess.Popen(
-                ["powershell", "-NoProfile", "-Command", command],
-                creationflags=subprocess.CREATE_NO_WINDOW,
-            )
-        except (FileNotFoundError, OSError):
-            # 音声出力を利用できない場合でも、カウントダウン終了は維持する。
-            pass
+            sound.set_volume(volume / self.MAX_VOLUME)
+            sound.play()
+        except pygame.error:
+            self._audio_available = False
 
     def _resize_font(self, event: tk.Event) -> None:
         """表示領域の横幅のおよそ80%を占めるフォントサイズに調整する。"""
@@ -333,6 +346,8 @@ class Calibration:
         """予約済み処理を取り消し、両方のウィンドウを閉じる。"""
         self._cancel_scheduled_update()
         self._running = False
+        if pygame.mixer.get_init() is not None:
+            pygame.mixer.quit()
         self.root.destroy()
 
     def run(self) -> None:
