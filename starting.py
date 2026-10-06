@@ -11,7 +11,8 @@ import sys
 import tempfile
 import time
 import tkinter as tk
-from tkinter import messagebox
+from tkinter import font as tkfont
+from tkinter import messagebox, ttk
 from typing import Callable, Optional
 import wave
 
@@ -42,6 +43,23 @@ class Stating:
     # ラップ表示時、従来のタイム文字サイズを100%として縮小する。
     LAP_TIMER_FONT_RATIO = 0.6
     LAP_LINE_FONT_RATIO = 0.4
+    FLYING_START_POINTS = -35
+    CHECKPOINT_POINTS = 2
+    CHECKPOINT_MIN = 0
+    CHECKPOINT_MAX = 3
+    LAP_GATE_POINTS = 3
+    FINISH_POINTS = 3
+    FINISH_CONFIRM_MS = 3000
+    BOTTLE_PUSH_POINTS = 5
+    BOTTLE_DELIVERY_POINTS = 1
+    BOTTLE_COLOR_POINTS = 5
+    RALLY_POINTS = 5
+    FLYING_START_TEXT = f"☑フライングスタート\u3000{FLYING_START_POINTS}ポイント"
+    LAP_GATE_TEXT = f"☑Lapゲート到達 {LAP_GATE_POINTS}ポイント"
+    FINISH_TEXT = f"フィニィッシュ\u3000{FINISH_POINTS}ポイント"
+    BOTTLE_PUSH_TEXT = f"ボトル押し出し\u3000{BOTTLE_PUSH_POINTS}ポイント"
+    BOTTLE_DELIVERY_TEXT = f"ボトル.デリバリー\u3000{BOTTLE_DELIVERY_POINTS}ポイント"
+    BOTTLE_COLOR_TEXT = f"ボトル.色一致\u3000{BOTTLE_COLOR_POINTS}ポイント"
 
     def __init__(
         self,
@@ -63,6 +81,9 @@ class Stating:
         self._wav_path: Optional[Path] = None
         self._lap_seconds: Optional[float] = None
         self._display_width = 320
+        self._finish_after_id: Optional[str] = None
+        self._finish_pending = False
+        self._finish_confirmed = False
 
         self.root = root if root is not None else tk.Tk()
         self.root.title("Go to the Start 操作")
@@ -97,7 +118,6 @@ class Stating:
             command=self._change_volume,
         )
         self.volume_scale.grid(row=3, column=0, columnspan=3, sticky="ew", pady=(0, 10))
-        self._bind_lap_key(self.volume_scale)
 
         self.start_button = tk.Button(frame, text="スタート", command=self.start)
         self.start_button.grid(row=4, column=0, padx=(0, 4))
@@ -105,17 +125,99 @@ class Stating:
         self.reset_button.grid(row=4, column=1, padx=4)
         self.update_button = tk.Button(frame, text="更新", command=self.update)
         self.update_button.grid(row=4, column=2, padx=(4, 0))
+
+        self.flying_var = tk.BooleanVar(value=False)
+        self.flying_check = tk.Checkbutton(
+            frame,
+            text="フライングスタート",
+            variable=self.flying_var,
+            command=self._update_flying_start,
+        )
+        self.flying_check.grid(row=5, column=0, columnspan=3, sticky="w", pady=(12, 4))
+
+        checkpoint_row = tk.Frame(frame)
+        checkpoint_row.grid(row=6, column=0, columnspan=3, sticky="ew", pady=(4, 0))
+        tk.Label(checkpoint_row, text="チェックポイント到達").pack(side="left")
+        self.checkpoint_var = tk.StringVar(value=str(self.CHECKPOINT_MIN))
+        self.checkpoint_combo = ttk.Combobox(
+            checkpoint_row,
+            textvariable=self.checkpoint_var,
+            values=[str(value) for value in range(self.CHECKPOINT_MIN, self.CHECKPOINT_MAX + 1)],
+            width=4,
+            state="readonly",
+        )
+        self.checkpoint_combo.pack(side="left", padx=(8, 0))
+
         self.lap_button = tk.Button(frame, text="Lap", command=self.record_lap)
-        self.lap_button.grid(row=5, column=0, columnspan=3, sticky="ew", pady=(12, 0))
+        self.lap_button.grid(row=7, column=0, columnspan=3, sticky="ew", pady=(12, 0))
+        self._build_score_controls(frame)
         for widget in (
             self.root,
             self.seconds_entry,
+            self.volume_scale,
             self.start_button,
             self.reset_button,
             self.update_button,
+            self.flying_check,
+            self.checkpoint_combo,
             self.lap_button,
+            self.finish_button,
+            self.finish_cancel_button,
+            self.bottle_check,
+            self.delivery_check,
+            self.color_check,
+            self.rally_combo,
         ):
             self._bind_lap_key(widget)
+
+    def _build_score_controls(self, frame: tk.Frame) -> None:
+        """Lapボタンの下へ、No.4以降の課題ポイント操作を1行ずつ置く。"""
+        self.finish_button = tk.Button(frame, text="フィニィッシュ", command=self.press_finish)
+        self.finish_button.grid(row=8, column=0, columnspan=3, sticky="ew", pady=(12, 4))
+        self.finish_cancel_button = tk.Button(
+            frame, text="フィニィッシュキャンセル", command=self.cancel_finish
+        )
+        self.finish_cancel_button.grid(row=9, column=0, columnspan=3, sticky="ew", pady=(4, 4))
+
+        self.bottle_var = tk.BooleanVar(value=False)
+        self.bottle_check = tk.Checkbutton(
+            frame,
+            text="ボトル押し出し",
+            variable=self.bottle_var,
+            command=self._update_bottle,
+        )
+        self.bottle_check.grid(row=10, column=0, columnspan=3, sticky="w", pady=(4, 4))
+
+        self.delivery_var = tk.BooleanVar(value=False)
+        self.delivery_check = tk.Checkbutton(
+            frame,
+            text="ボトルデリバリー.デリバリー",
+            variable=self.delivery_var,
+            command=self._update_delivery,
+        )
+        self.delivery_check.grid(row=11, column=0, columnspan=3, sticky="w", pady=(4, 4))
+
+        self.color_var = tk.BooleanVar(value=False)
+        self.color_check = tk.Checkbutton(
+            frame,
+            text="ボトルデリバリー.色一致",
+            variable=self.color_var,
+            command=self._update_color,
+        )
+        self.color_check.grid(row=12, column=0, columnspan=3, sticky="w", pady=(4, 4))
+
+        rally_row = tk.Frame(frame)
+        rally_row.grid(row=13, column=0, columnspan=3, sticky="ew", pady=(4, 0))
+        tk.Label(rally_row, text="ETラリー.1周回").pack(side="left")
+        self.rally_var = tk.StringVar(value=str(self.CHECKPOINT_MIN))
+        self.rally_combo = ttk.Combobox(
+            rally_row,
+            textvariable=self.rally_var,
+            values=[str(value) for value in range(self.CHECKPOINT_MIN, self.CHECKPOINT_MAX + 1)],
+            width=4,
+            state="readonly",
+        )
+        self.rally_combo.pack(side="left", padx=(8, 0))
 
     def _build_display_window(self) -> None:
         self.display = tk.Toplevel(self.root)
@@ -133,15 +235,49 @@ class Stating:
             foreground=self.NORMAL_FOREGROUND,
             font=("Arial", 64, "bold"),
         )
-        self.timer_label.pack()
-        self.lap_label = tk.Label(
+        self.timer_label.grid(row=0, column=0)
+        self.lap_label = self._make_score_label(1)
+        self.lap_label.grid_remove()
+        self.flying_label = self._make_score_label(2)
+        self.flying_label.grid_remove()
+        self.checkpoint_label = self._make_score_label(3)
+        self.lap_gate_label = self._make_score_label(4)
+        self.lap_gate_label.grid_remove()
+        self.finish_label = self._make_score_label(5)
+        self.finish_label.grid_remove()
+        self.bottle_label = self._make_score_label(6)
+        self.bottle_label.grid_remove()
+        self.delivery_label = self._make_score_label(7)
+        self.delivery_label.grid_remove()
+        self.color_label = self._make_score_label(8)
+        self.color_label.grid_remove()
+        self.rally_label = self._make_score_label(9)
+        self._point_labels = (
+            self.flying_label,
+            self.checkpoint_label,
+            self.lap_gate_label,
+            self.finish_label,
+            self.bottle_label,
+            self.delivery_label,
+            self.color_label,
+            self.rally_label,
+        )
+        self._update_checkpoint()
+        self.checkpoint_var.trace_add("write", self._update_checkpoint)
+        self._update_rally()
+        self.rally_var.trace_add("write", self._update_rally)
+        self.display.bind("<Configure>", self._resize_font)
+        self._bind_lap_key(self.display)
+
+    def _make_score_label(self, row: int) -> tk.Label:
+        label = tk.Label(
             self.content,
             background=self.NORMAL_BACKGROUND,
             foreground=self.NORMAL_FOREGROUND,
-            font=("Arial", 24, "bold"),
+            font=("Yu Gothic UI", 24, "bold"),
         )
-        self.display.bind("<Configure>", self._resize_font)
-        self._bind_lap_key(self.display)
+        label.grid(row=row, column=0)
+        return label
 
     @classmethod
     def parse_seconds(cls, value: str) -> int:
@@ -156,6 +292,16 @@ class Stating:
     @staticmethod
     def format_elapsed(seconds: float) -> str:
         return f"{max(0.0, seconds):05.1f}"
+
+    @classmethod
+    def format_checkpoint(cls, count: int) -> str:
+        points = count * cls.CHECKPOINT_POINTS
+        return f"チェックポイント到達\u3000{count} 箇所\u3000 {points}ポイント"
+
+    @classmethod
+    def format_rally(cls, count: int) -> str:
+        points = count * cls.RALLY_POINTS
+        return f"ETラリー.{count}周回\u3000 {points}ポイント"
 
     @classmethod
     def detect_last_go_cue(cls, wav_path: Path) -> float:
@@ -279,15 +425,91 @@ class Stating:
         self._lap_seconds = elapsed
         self.lap_label.configure(text=f"LAP TIME:{self.format_elapsed(elapsed)}")
         if not self.lap_label.winfo_manager():
-            self.lap_label.pack()
+            self.lap_label.grid()
+        self._set_score_line(self.lap_gate_label, True, self.LAP_GATE_TEXT)
         self._apply_fonts()
 
     def _clear_lap(self) -> None:
         self._lap_seconds = None
         self.lap_label.configure(text="")
         if self.lap_label.winfo_manager():
-            self.lap_label.pack_forget()
+            self.lap_label.grid_remove()
+        self._set_score_line(self.lap_gate_label, False, "")
         self._apply_fonts()
+
+    def press_finish(self) -> None:
+        """フィニィッシュ後、3秒間キャンセルされなければポイントを表示する。"""
+        if self._finish_confirmed:
+            return
+        self._cancel_finish_wait()
+        self._finish_pending = True
+        self._finish_after_id = self.root.after(self.FINISH_CONFIRM_MS, self._confirm_finish)
+
+    def cancel_finish(self) -> None:
+        """フィニィッシュ押下から3秒以内なら、ポイント表示を取り消す。"""
+        if not self._finish_pending:
+            return
+        self._cancel_finish_wait()
+
+    def _confirm_finish(self) -> None:
+        self._finish_after_id = None
+        if not self._finish_pending:
+            return
+        self._finish_pending = False
+        self._finish_confirmed = True
+        self._set_score_line(self.finish_label, True, self.FINISH_TEXT)
+
+    def _cancel_finish_wait(self) -> None:
+        self._finish_pending = False
+        if self._finish_after_id is None:
+            return
+        try:
+            self.root.after_cancel(self._finish_after_id)
+        except tk.TclError:
+            pass
+        self._finish_after_id = None
+
+    def _checkpoint_count(self) -> int:
+        return self._selected_count(self.checkpoint_var)
+
+    def _set_score_line(self, label: tk.Label, visible: bool, text: str) -> None:
+        if visible:
+            label.configure(text=text)
+            if not label.winfo_manager():
+                label.grid()
+        elif label.winfo_manager():
+            label.grid_remove()
+
+    def _update_flying_start(self) -> None:
+        """チェックONのとき、LAP TIMEの次の行へフライングスタートを出す。"""
+        self._set_score_line(self.flying_label, self.flying_var.get(), self.FLYING_START_TEXT)
+
+    def _update_bottle(self) -> None:
+        self._set_score_line(self.bottle_label, self.bottle_var.get(), self.BOTTLE_PUSH_TEXT)
+
+    def _update_delivery(self) -> None:
+        self._set_score_line(self.delivery_label, self.delivery_var.get(), self.BOTTLE_DELIVERY_TEXT)
+
+    def _update_color(self) -> None:
+        self._set_score_line(self.color_label, self.color_var.get(), self.BOTTLE_COLOR_TEXT)
+
+    def _update_checkpoint(self, *_args: object) -> None:
+        """選択箇所数と、その2倍のポイントを常に表示する。"""
+        self.checkpoint_label.configure(text=self.format_checkpoint(self._checkpoint_count()))
+
+    def _update_rally(self, *_args: object) -> None:
+        """選択周回数と、その5倍のポイントを常に表示する。"""
+        self.rally_label.configure(text=self.format_rally(self._rally_count()))
+
+    def _rally_count(self) -> int:
+        return self._selected_count(self.rally_var)
+
+    def _selected_count(self, variable: tk.StringVar) -> int:
+        try:
+            count = int(variable.get())
+        except (TypeError, ValueError):
+            return self.CHECKPOINT_MIN
+        return min(self.CHECKPOINT_MAX, max(self.CHECKPOINT_MIN, count))
 
     def _on_space(self, _event: tk.Event) -> str:
         """スペースキーでラップを記録し、入力欄にはスペースを入れない。"""
@@ -334,7 +556,8 @@ class Stating:
         self.display.configure(background=background)
         self.content.configure(background=background)
         self.timer_label.configure(background=background, foreground=foreground)
-        self.lap_label.configure(background=background, foreground=self.NORMAL_FOREGROUND)
+        for label in (self.lap_label, *self._point_labels):
+            label.configure(background=background, foreground=self.NORMAL_FOREGROUND)
 
     def _resize_font(self, event: tk.Event) -> None:
         if event.widget is not self.display:
@@ -350,8 +573,35 @@ class Stating:
         else:
             timer_size = max(1, int(base * self.LAP_TIMER_FONT_RATIO))
         lap_size = max(1, int(base * self.LAP_LINE_FONT_RATIO))
+        point_size = self._fit_point_font(lap_size)
         self.timer_label.configure(font=("Arial", timer_size, "bold"))
         self.lap_label.configure(font=("Arial", lap_size, "bold"))
+        for label in self._point_labels:
+            label.configure(font=("Yu Gothic UI", point_size, "bold"))
+
+    def _fit_point_font(self, preferred: int) -> int:
+        """課題ポイント行がウィンドウ幅に収まる文字サイズを返す。"""
+        samples = (
+            self.FLYING_START_TEXT,
+            self.format_checkpoint(self.CHECKPOINT_MAX),
+            self.LAP_GATE_TEXT,
+            self.FINISH_TEXT,
+            self.BOTTLE_PUSH_TEXT,
+            self.BOTTLE_DELIVERY_TEXT,
+            self.BOTTLE_COLOR_TEXT,
+            self.format_rally(self.CHECKPOINT_MAX),
+        )
+        limit = max(1, int(self._display_width * 0.92))
+        measure_font = tkfont.Font(
+            root=self.display, family="Yu Gothic UI", size=max(1, preferred), weight="bold"
+        )
+        size = max(1, preferred)
+        while size > 1:
+            measure_font.configure(size=size)
+            if all(measure_font.measure(sample) <= limit for sample in samples):
+                return size
+            size -= 1
+        return 1
 
     def _stop_timer(self) -> None:
         self._running = False
@@ -384,6 +634,7 @@ class Stating:
             self._wav_path = None
 
     def close(self) -> None:
+        self._cancel_finish_wait()
         self._stop_timer()
         self._stop_audio()
         if pygame.mixer.get_init() is not None:
