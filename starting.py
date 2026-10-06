@@ -39,6 +39,9 @@ class Stating:
     FINISHED_BACKGROUND = "red"
     NORMAL_FOREGROUND = "white"
     WARNING_FOREGROUND = "yellow"
+    # ラップ表示時、従来のタイム文字サイズを100%として縮小する。
+    LAP_TIMER_FONT_RATIO = 0.6
+    LAP_LINE_FONT_RATIO = 0.4
 
     def __init__(
         self,
@@ -58,6 +61,8 @@ class Stating:
         self._audio_sound: Optional[pygame.mixer.Sound] = None
         self._audio_channel: Optional[pygame.mixer.Channel] = None
         self._wav_path: Optional[Path] = None
+        self._lap_seconds: Optional[float] = None
+        self._display_width = 320
 
         self.root = root if root is not None else tk.Tk()
         self.root.title("Go to the Start 操作")
@@ -83,18 +88,34 @@ class Stating:
 
         tk.Label(frame, text="音量").grid(row=2, column=0, columnspan=3, sticky="w")
         self.volume_var = tk.IntVar(value=self.DEFAULT_VOLUME)
-        tk.Scale(
+        self.volume_scale = tk.Scale(
             frame,
             from_=0,
             to=100,
             orient="horizontal",
             variable=self.volume_var,
             command=self._change_volume,
-        ).grid(row=3, column=0, columnspan=3, sticky="ew", pady=(0, 10))
+        )
+        self.volume_scale.grid(row=3, column=0, columnspan=3, sticky="ew", pady=(0, 10))
+        self._bind_lap_key(self.volume_scale)
 
-        tk.Button(frame, text="スタート", command=self.start).grid(row=4, column=0, padx=(0, 4))
-        tk.Button(frame, text="リセット", command=self.reset).grid(row=4, column=1, padx=4)
-        tk.Button(frame, text="更新", command=self.update).grid(row=4, column=2, padx=(4, 0))
+        self.start_button = tk.Button(frame, text="スタート", command=self.start)
+        self.start_button.grid(row=4, column=0, padx=(0, 4))
+        self.reset_button = tk.Button(frame, text="リセット", command=self.reset)
+        self.reset_button.grid(row=4, column=1, padx=4)
+        self.update_button = tk.Button(frame, text="更新", command=self.update)
+        self.update_button.grid(row=4, column=2, padx=(4, 0))
+        self.lap_button = tk.Button(frame, text="Lap", command=self.record_lap)
+        self.lap_button.grid(row=5, column=0, columnspan=3, sticky="ew", pady=(12, 0))
+        for widget in (
+            self.root,
+            self.seconds_entry,
+            self.start_button,
+            self.reset_button,
+            self.update_button,
+            self.lap_button,
+        ):
+            self._bind_lap_key(widget)
 
     def _build_display_window(self) -> None:
         self.display = tk.Toplevel(self.root)
@@ -103,14 +124,24 @@ class Stating:
         self.display.minsize(320, 180)
         self.display.protocol("WM_DELETE_WINDOW", self.close)
 
+        self.content = tk.Frame(self.display, background=self.NORMAL_BACKGROUND)
+        self.content.pack(expand=True)
+
         self.timer_label = tk.Label(
-            self.display,
+            self.content,
             background=self.NORMAL_BACKGROUND,
             foreground=self.NORMAL_FOREGROUND,
             font=("Arial", 64, "bold"),
         )
-        self.timer_label.pack(expand=True, fill="both")
+        self.timer_label.pack()
+        self.lap_label = tk.Label(
+            self.content,
+            background=self.NORMAL_BACKGROUND,
+            foreground=self.NORMAL_FOREGROUND,
+            font=("Arial", 24, "bold"),
+        )
         self.display.bind("<Configure>", self._resize_font)
+        self._bind_lap_key(self.display)
 
     @classmethod
     def parse_seconds(cls, value: str) -> int:
@@ -240,6 +271,32 @@ class Stating:
             self.seconds_entry.focus_set()
             return None
 
+    def record_lap(self) -> None:
+        """カウントアップ中の経過時間を、表示中タイムの直下へ出す。"""
+        if not self._running or self._timer_started_at is None:
+            return
+        elapsed = min(float(self._duration_seconds), self._clock() - self._timer_started_at)
+        self._lap_seconds = elapsed
+        self.lap_label.configure(text=f"LAP TIME:{self.format_elapsed(elapsed)}")
+        if not self.lap_label.winfo_manager():
+            self.lap_label.pack()
+        self._apply_fonts()
+
+    def _clear_lap(self) -> None:
+        self._lap_seconds = None
+        self.lap_label.configure(text="")
+        if self.lap_label.winfo_manager():
+            self.lap_label.pack_forget()
+        self._apply_fonts()
+
+    def _on_space(self, _event: tk.Event) -> str:
+        """スペースキーでラップを記録し、入力欄にはスペースを入れない。"""
+        self.record_lap()
+        return "break"
+
+    def _bind_lap_key(self, widget: tk.Misc) -> None:
+        widget.bind("<space>", self._on_space)
+
     def _change_volume(self, value: str) -> None:
         volume = max(0, min(100, int(float(value))))
         if self._audio_sound is not None:
@@ -275,10 +332,26 @@ class Stating:
         else:
             background, foreground = self.NORMAL_BACKGROUND, self.NORMAL_FOREGROUND
         self.display.configure(background=background)
+        self.content.configure(background=background)
         self.timer_label.configure(background=background, foreground=foreground)
+        self.lap_label.configure(background=background, foreground=self.NORMAL_FOREGROUND)
 
     def _resize_font(self, event: tk.Event) -> None:
-        self.timer_label.configure(font=("Arial", max(12, int(event.width * 0.8 / 5)), "bold"))
+        if event.widget is not self.display:
+            return
+        self._display_width = max(1, int(event.width))
+        self._apply_fonts()
+
+    def _apply_fonts(self) -> None:
+        """タイムは横幅の約80%を100%とし、ラップ表示中は60%と40%にする。"""
+        base = max(12, int(self._display_width * 0.8 / 5))
+        if self._lap_seconds is None:
+            timer_size = base
+        else:
+            timer_size = max(1, int(base * self.LAP_TIMER_FONT_RATIO))
+        lap_size = max(1, int(base * self.LAP_LINE_FONT_RATIO))
+        self.timer_label.configure(font=("Arial", timer_size, "bold"))
+        self.lap_label.configure(font=("Arial", lap_size, "bold"))
 
     def _stop_timer(self) -> None:
         self._running = False
@@ -295,6 +368,7 @@ class Stating:
             except tk.TclError:
                 pass
             self._cue_after_id = None
+        self._clear_lap()
 
     def _stop_audio(self) -> None:
         if self._audio_channel is not None:
