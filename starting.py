@@ -40,9 +40,10 @@ class Stating:
     FINISHED_BACKGROUND = "red"
     NORMAL_FOREGROUND = "white"
     WARNING_FOREGROUND = "yellow"
-    # ラップ表示時、従来のタイム文字サイズを100%として縮小する。
-    LAP_TIMER_FONT_RATIO = 0.6
-    LAP_LINE_FONT_RATIO = 0.4
+    # タイムを大きめにし、LAP TIME はその少し小さいサイズにする。
+    LAP_FONT_RATIO = 0.85
+    POINT_LINE_COUNT = 8
+    DISPLAY_VERTICAL_MARGIN = 12
     FLYING_START_POINTS = -35
     CHECKPOINT_POINTS = 2
     CHECKPOINT_MIN = 0
@@ -81,6 +82,7 @@ class Stating:
         self._wav_path: Optional[Path] = None
         self._lap_seconds: Optional[float] = None
         self._display_width = 320
+        self._display_height = 180
         self._finish_after_id: Optional[str] = None
         self._finish_pending = False
         self._finish_confirmed = False
@@ -101,13 +103,13 @@ class Stating:
         frame.grid(sticky="nsew")
 
         tk.Label(frame, text="カウントアップ時間（秒）").grid(
-            row=0, column=0, columnspan=3, sticky="w"
+            row=0, column=0, columnspan=4, sticky="w"
         )
         self.seconds_var = tk.StringVar(value=str(self.DEFAULT_SECONDS))
         self.seconds_entry = tk.Entry(frame, textvariable=self.seconds_var, width=10)
-        self.seconds_entry.grid(row=1, column=0, columnspan=3, sticky="ew", pady=(4, 12))
+        self.seconds_entry.grid(row=1, column=0, columnspan=4, sticky="ew", pady=(4, 12))
 
-        tk.Label(frame, text="音量").grid(row=2, column=0, columnspan=3, sticky="w")
+        tk.Label(frame, text="音量").grid(row=2, column=0, columnspan=4, sticky="w")
         self.volume_var = tk.IntVar(value=self.DEFAULT_VOLUME)
         self.volume_scale = tk.Scale(
             frame,
@@ -117,14 +119,16 @@ class Stating:
             variable=self.volume_var,
             command=self._change_volume,
         )
-        self.volume_scale.grid(row=3, column=0, columnspan=3, sticky="ew", pady=(0, 10))
+        self.volume_scale.grid(row=3, column=0, columnspan=4, sticky="ew", pady=(0, 10))
 
         self.start_button = tk.Button(frame, text="スタート", command=self.start)
         self.start_button.grid(row=4, column=0, padx=(0, 4))
+        self.stop_button = tk.Button(frame, text="ストップ", command=self.stop)
+        self.stop_button.grid(row=4, column=1, padx=4)
         self.reset_button = tk.Button(frame, text="リセット", command=self.reset)
-        self.reset_button.grid(row=4, column=1, padx=4)
+        self.reset_button.grid(row=4, column=2, padx=4)
         self.update_button = tk.Button(frame, text="更新", command=self.update)
-        self.update_button.grid(row=4, column=2, padx=(4, 0))
+        self.update_button.grid(row=4, column=3, padx=(4, 0))
 
         self.flying_var = tk.BooleanVar(value=False)
         self.flying_check = tk.Checkbutton(
@@ -133,10 +137,10 @@ class Stating:
             variable=self.flying_var,
             command=self._update_flying_start,
         )
-        self.flying_check.grid(row=5, column=0, columnspan=3, sticky="w", pady=(12, 4))
+        self.flying_check.grid(row=5, column=0, columnspan=4, sticky="w", pady=(12, 4))
 
         checkpoint_row = tk.Frame(frame)
-        checkpoint_row.grid(row=6, column=0, columnspan=3, sticky="ew", pady=(4, 0))
+        checkpoint_row.grid(row=6, column=0, columnspan=4, sticky="ew", pady=(4, 0))
         tk.Label(checkpoint_row, text="チェックポイント到達").pack(side="left")
         self.checkpoint_var = tk.StringVar(value=str(self.CHECKPOINT_MIN))
         self.checkpoint_combo = ttk.Combobox(
@@ -149,13 +153,14 @@ class Stating:
         self.checkpoint_combo.pack(side="left", padx=(8, 0))
 
         self.lap_button = tk.Button(frame, text="Lap", command=self.record_lap)
-        self.lap_button.grid(row=7, column=0, columnspan=3, sticky="ew", pady=(12, 0))
+        self.lap_button.grid(row=7, column=0, columnspan=4, sticky="ew", pady=(12, 0))
         self._build_score_controls(frame)
         for widget in (
             self.root,
             self.seconds_entry,
             self.volume_scale,
             self.start_button,
+            self.stop_button,
             self.reset_button,
             self.update_button,
             self.flying_check,
@@ -173,11 +178,11 @@ class Stating:
     def _build_score_controls(self, frame: tk.Frame) -> None:
         """Lapボタンの下へ、No.4以降の課題ポイント操作を1行ずつ置く。"""
         self.finish_button = tk.Button(frame, text="フィニィッシュ", command=self.press_finish)
-        self.finish_button.grid(row=8, column=0, columnspan=3, sticky="ew", pady=(12, 4))
+        self.finish_button.grid(row=8, column=0, columnspan=4, sticky="ew", pady=(12, 4))
         self.finish_cancel_button = tk.Button(
             frame, text="フィニィッシュキャンセル", command=self.cancel_finish
         )
-        self.finish_cancel_button.grid(row=9, column=0, columnspan=3, sticky="ew", pady=(4, 4))
+        self.finish_cancel_button.grid(row=9, column=0, columnspan=4, sticky="ew", pady=(4, 4))
 
         self.bottle_var = tk.BooleanVar(value=False)
         self.bottle_check = tk.Checkbutton(
@@ -186,7 +191,7 @@ class Stating:
             variable=self.bottle_var,
             command=self._update_bottle,
         )
-        self.bottle_check.grid(row=10, column=0, columnspan=3, sticky="w", pady=(4, 4))
+        self.bottle_check.grid(row=10, column=0, columnspan=4, sticky="w", pady=(4, 4))
 
         self.delivery_var = tk.BooleanVar(value=False)
         self.delivery_check = tk.Checkbutton(
@@ -195,7 +200,7 @@ class Stating:
             variable=self.delivery_var,
             command=self._update_delivery,
         )
-        self.delivery_check.grid(row=11, column=0, columnspan=3, sticky="w", pady=(4, 4))
+        self.delivery_check.grid(row=11, column=0, columnspan=4, sticky="w", pady=(4, 4))
 
         self.color_var = tk.BooleanVar(value=False)
         self.color_check = tk.Checkbutton(
@@ -204,10 +209,10 @@ class Stating:
             variable=self.color_var,
             command=self._update_color,
         )
-        self.color_check.grid(row=12, column=0, columnspan=3, sticky="w", pady=(4, 4))
+        self.color_check.grid(row=12, column=0, columnspan=4, sticky="w", pady=(4, 4))
 
         rally_row = tk.Frame(frame)
-        rally_row.grid(row=13, column=0, columnspan=3, sticky="ew", pady=(4, 0))
+        rally_row.grid(row=13, column=0, columnspan=4, sticky="ew", pady=(4, 0))
         tk.Label(rally_row, text="ETラリー.1周回").pack(side="left")
         self.rally_var = tk.StringVar(value=str(self.CHECKPOINT_MIN))
         self.rally_combo = ttk.Combobox(
@@ -234,6 +239,10 @@ class Stating:
             background=self.NORMAL_BACKGROUND,
             foreground=self.NORMAL_FOREGROUND,
             font=("Arial", 64, "bold"),
+            borderwidth=0,
+            highlightthickness=0,
+            padx=0,
+            pady=0,
         )
         self.timer_label.grid(row=0, column=0)
         self.lap_label = self._make_score_label(1)
@@ -241,6 +250,7 @@ class Stating:
         self.flying_label = self._make_score_label(2)
         self.flying_label.grid_remove()
         self.checkpoint_label = self._make_score_label(3)
+        self.checkpoint_label.grid_remove()
         self.lap_gate_label = self._make_score_label(4)
         self.lap_gate_label.grid_remove()
         self.finish_label = self._make_score_label(5)
@@ -252,6 +262,7 @@ class Stating:
         self.color_label = self._make_score_label(8)
         self.color_label.grid_remove()
         self.rally_label = self._make_score_label(9)
+        self.rally_label.grid_remove()
         self._point_labels = (
             self.flying_label,
             self.checkpoint_label,
@@ -275,6 +286,10 @@ class Stating:
             background=self.NORMAL_BACKGROUND,
             foreground=self.NORMAL_FOREGROUND,
             font=("Yu Gothic UI", 24, "bold"),
+            borderwidth=0,
+            highlightthickness=0,
+            padx=0,
+            pady=0,
         )
         label.grid(row=row, column=0)
         return label
@@ -394,6 +409,16 @@ class Stating:
         self._audio_channel.set_volume(self.volume_var.get() / 100)
         self._cue_after_id = self.root.after(round(self._cue_seconds * 1000), self._begin_countup)
 
+    def stop(self) -> None:
+        """タイムカウントと音声再生を止める。表示中のタイムと得点は残す。"""
+        if self._running and self._timer_started_at is not None:
+            elapsed = min(float(self._duration_seconds), self._clock() - self._timer_started_at)
+            self._show_elapsed(elapsed)
+        self._running = False
+        self._timer_started_at = None
+        self._cancel_scheduled_updates()
+        self._stop_audio()
+
     def reset(self) -> None:
         self._stop_timer()
         self._stop_audio()
@@ -446,10 +471,10 @@ class Stating:
         self._finish_after_id = self.root.after(self.FINISH_CONFIRM_MS, self._confirm_finish)
 
     def cancel_finish(self) -> None:
-        """フィニィッシュ押下から3秒以内なら、ポイント表示を取り消す。"""
-        if not self._finish_pending:
-            return
+        """待機中の確定を止め、表示中のフィニィッシュ行も消す。"""
         self._cancel_finish_wait()
+        self._finish_confirmed = False
+        self._set_score_line(self.finish_label, False, "")
 
     def _confirm_finish(self) -> None:
         self._finish_after_id = None
@@ -494,12 +519,22 @@ class Stating:
         self._set_score_line(self.color_label, self.color_var.get(), self.BOTTLE_COLOR_TEXT)
 
     def _update_checkpoint(self, *_args: object) -> None:
-        """選択箇所数と、その2倍のポイントを常に表示する。"""
-        self.checkpoint_label.configure(text=self.format_checkpoint(self._checkpoint_count()))
+        """1箇所以上のときだけ、箇所数とその2倍のポイントを表示する。"""
+        count = self._checkpoint_count()
+        self._set_score_line(
+            self.checkpoint_label,
+            count * self.CHECKPOINT_POINTS > 0,
+            self.format_checkpoint(count),
+        )
 
     def _update_rally(self, *_args: object) -> None:
-        """選択周回数と、その5倍のポイントを常に表示する。"""
-        self.rally_label.configure(text=self.format_rally(self._rally_count()))
+        """1周以上のときだけ、周回数とその5倍のポイントを表示する。"""
+        count = self._rally_count()
+        self._set_score_line(
+            self.rally_label,
+            count * self.RALLY_POINTS > 0,
+            self.format_rally(count),
+        )
 
     def _rally_count(self) -> int:
         return self._selected_count(self.rally_var)
@@ -563,24 +598,44 @@ class Stating:
         if event.widget is not self.display:
             return
         self._display_width = max(1, int(event.width))
+        self._display_height = max(1, int(event.height))
         self._apply_fonts()
 
     def _apply_fonts(self) -> None:
-        """タイムは横幅の約80%を100%とし、ラップ表示中は60%と40%にする。"""
-        base = max(12, int(self._display_width * 0.8 / 5))
-        if self._lap_seconds is None:
-            timer_size = base
-        else:
-            timer_size = max(1, int(base * self.LAP_TIMER_FONT_RATIO))
-        lap_size = max(1, int(base * self.LAP_LINE_FONT_RATIO))
-        point_size = self._fit_point_font(lap_size)
+        """タイムは大きめ、LAP TIME はその少し小さいサイズ、他8行は縦幅に収める。"""
+        width_limit = max(1, int(self._display_width * 0.92))
+        height_budget = max(self.POINT_LINE_COUNT, self._display_height - self.DISPLAY_VERTICAL_MARGIN)
+        timer_size = max(1, int(self._display_width * 0.8 / 5))
+        lap_limit = self._largest_fitting_size("Arial", "LAP TIME:120.0", width_limit)
+        if lap_limit > 1:
+            timer_size = min(timer_size, max(1, int(lap_limit / self.LAP_FONT_RATIO)))
+        timer_size, lap_size = self._fit_timer_and_lap(timer_size, height_budget)
+        timer_height = self._line_space("Arial", timer_size)
+        lap_height = self._line_space("Arial", lap_size)
+        remaining = max(1, height_budget - timer_height - lap_height)
+        point_size = min(lap_size, self._fit_point_font(remaining, width_limit))
         self.timer_label.configure(font=("Arial", timer_size, "bold"))
         self.lap_label.configure(font=("Arial", lap_size, "bold"))
         for label in self._point_labels:
             label.configure(font=("Yu Gothic UI", point_size, "bold"))
 
-    def _fit_point_font(self, preferred: int) -> int:
-        """課題ポイント行がウィンドウ幅に収まる文字サイズを返す。"""
+    def _fit_timer_and_lap(self, timer_size: int, height_budget: int) -> tuple[int, int]:
+        """タイムと LAP TIME を、8行分の高さを残せるサイズまで縮める。"""
+        timer_size = max(1, timer_size)
+        minimum_point_height = self._line_space("Yu Gothic UI", 1) * self.POINT_LINE_COUNT
+        while True:
+            lap_size = max(1, int(timer_size * self.LAP_FONT_RATIO))
+            if timer_size > 1:
+                lap_size = min(lap_size, timer_size - 1)
+            timer_height = self._line_space("Arial", timer_size)
+            lap_height = self._line_space("Arial", lap_size)
+            fits = timer_height + lap_height + minimum_point_height <= height_budget
+            if fits or timer_size == 1:
+                return timer_size, lap_size
+            timer_size -= 1
+
+    def _fit_point_font(self, remaining_height: int, width_limit: int) -> int:
+        """8行が縦幅と横幅に収まる文字サイズを返す。"""
         samples = (
             self.FLYING_START_TEXT,
             self.format_checkpoint(self.CHECKPOINT_MAX),
@@ -591,34 +646,63 @@ class Stating:
             self.BOTTLE_COLOR_TEXT,
             self.format_rally(self.CHECKPOINT_MAX),
         )
-        limit = max(1, int(self._display_width * 0.92))
-        measure_font = tkfont.Font(
-            root=self.display, family="Yu Gothic UI", size=max(1, preferred), weight="bold"
-        )
-        size = max(1, preferred)
+        size = max(1, remaining_height // self.POINT_LINE_COUNT)
         while size > 1:
-            measure_font.configure(size=size)
-            if all(measure_font.measure(sample) <= limit for sample in samples):
+            if self._line_space("Yu Gothic UI", size) * self.POINT_LINE_COUNT > remaining_height:
+                size -= 1
+                continue
+            if all(self._text_width("Yu Gothic UI", size, sample) <= width_limit for sample in samples):
                 return size
             size -= 1
         return 1
 
+    def _largest_fitting_size(self, family: str, text: str, width_limit: int) -> int:
+        low, high = 1, max(1, width_limit)
+        best = 1
+        while low <= high:
+            mid = (low + high) // 2
+            if self._text_width(family, mid, text) <= width_limit:
+                best = mid
+                low = mid + 1
+            else:
+                high = mid - 1
+        return best
+
+    def _line_space(self, family: str, size: int) -> int:
+        return int(self._bold_font(family, size).metrics("linespace"))
+
+    def _text_width(self, family: str, size: int, text: str) -> int:
+        return int(self._bold_font(family, size).measure(text))
+
+    def _bold_font(self, family: str, size: int) -> tkfont.Font:
+        cache = getattr(self, "_font_cache", None)
+        if cache is None:
+            cache = {}
+            self._font_cache = cache
+        font = cache.get(family)
+        if font is None:
+            font = tkfont.Font(root=self.display, family=family, size=max(1, size), weight="bold")
+            cache[family] = font
+        else:
+            font.configure(size=max(1, size))
+        return font
+
     def _stop_timer(self) -> None:
         self._running = False
         self._timer_started_at = None
-        if self._after_id is not None:
-            try:
-                self.root.after_cancel(self._after_id)
-            except tk.TclError:
-                pass
-            self._after_id = None
-        if self._cue_after_id is not None:
-            try:
-                self.root.after_cancel(self._cue_after_id)
-            except tk.TclError:
-                pass
-            self._cue_after_id = None
+        self._cancel_scheduled_updates()
         self._clear_lap()
+
+    def _cancel_scheduled_updates(self) -> None:
+        for attribute in ("_after_id", "_cue_after_id"):
+            after_id = getattr(self, attribute)
+            if after_id is None:
+                continue
+            try:
+                self.root.after_cancel(after_id)
+            except tk.TclError:
+                pass
+            setattr(self, attribute, None)
 
     def _stop_audio(self) -> None:
         if self._audio_channel is not None:
