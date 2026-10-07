@@ -27,7 +27,7 @@ class Stating:
     DEFAULT_SECONDS = 120
     MIN_SECONDS = 0
     MAX_SECONDS = 120
-    DEFAULT_VOLUME = 30
+    DEFAULT_VOLUME = 80
     SAMPLE_RATE = 44_100
     MIXER_BUFFER_SIZE = 512
     CUE_ANALYSIS_WINDOW_SECONDS = 0.02
@@ -60,7 +60,7 @@ class Stating:
     BOTTLE_DELIVERY_POINTS = 1
     BOTTLE_COLOR_POINTS = 5
     RALLY_POINTS = 5
-    FLYING_START_TEXT = f"☑フライングスタート\u3000{FLYING_START_POINTS}ポイント"
+    FLYING_START_TEXT = f"フライングスタート\u3000{FLYING_START_POINTS}ポイント"
     LAP_GATE_TEXT = f"☑Lapゲート到達 {LAP_GATE_POINTS}ポイント"
     FINISH_TEXT = f"フィニィッシュ\u3000{FINISH_POINTS}ポイント"
     BOTTLE_PUSH_TEXT = f"ボトル押し出し\u3000{BOTTLE_PUSH_POINTS}ポイント"
@@ -86,12 +86,13 @@ class Stating:
         self._audio_channel: Optional[pygame.mixer.Channel] = None
         self._wav_path: Optional[Path] = None
         self._lap_seconds: Optional[float] = None
-        self._display_width = 320
-        self._display_height = 180
+        self._display_width = 640
+        self._display_height = 360
         self._finish_after_id: Optional[str] = None
         self._finish_pending = False
         self._finish_confirmed = False
         self._result_visible = False
+        self._time_compact = False
 
         self.root = root if root is not None else tk.Tk()
         self.root.title("Go to the Start 操作")
@@ -161,36 +162,14 @@ class Stating:
         self.lap_button = tk.Button(frame, text="Lap", command=self.record_lap)
         self.lap_button.grid(row=7, column=0, columnspan=4, sticky="ew", pady=(12, 0))
         self._build_score_controls(frame)
-        for widget in (
-            self.root,
-            self.seconds_entry,
-            self.volume_scale,
-            self.start_button,
-            self.stop_button,
-            self.reset_button,
-            self.update_button,
-            self.flying_check,
-            self.checkpoint_combo,
-            self.lap_button,
-            self.finish_button,
-            self.finish_cancel_button,
-            self.bottle_check,
-            self.delivery_check,
-            self.color_check,
-            self.rally_combo,
-            self.result_button,
-        ):
+        self._bind_lap_key(self.root)
+        for widget in self._control_tab_order():
             self._bind_lap_key(widget)
+        self._bind_tab_order()
+        self._apply_control_access("before_start")
 
     def _build_score_controls(self, frame: tk.Frame) -> None:
         """Lapボタンの下へ、No.4以降の課題ポイント操作を1行ずつ置く。"""
-        self.finish_button = tk.Button(frame, text="フィニィッシュ", command=self.press_finish)
-        self.finish_button.grid(row=8, column=0, columnspan=4, sticky="ew", pady=(12, 4))
-        self.finish_cancel_button = tk.Button(
-            frame, text="フィニィッシュキャンセル", command=self.cancel_finish
-        )
-        self.finish_cancel_button.grid(row=9, column=0, columnspan=4, sticky="ew", pady=(4, 4))
-
         self.bottle_var = tk.BooleanVar(value=False)
         self.bottle_check = tk.Checkbutton(
             frame,
@@ -198,7 +177,7 @@ class Stating:
             variable=self.bottle_var,
             command=self._refresh_score_table,
         )
-        self.bottle_check.grid(row=10, column=0, columnspan=4, sticky="w", pady=(4, 4))
+        self.bottle_check.grid(row=8, column=0, columnspan=4, sticky="w", pady=(12, 4))
 
         self.delivery_var = tk.BooleanVar(value=False)
         self.delivery_check = tk.Checkbutton(
@@ -207,7 +186,7 @@ class Stating:
             variable=self.delivery_var,
             command=self._refresh_score_table,
         )
-        self.delivery_check.grid(row=11, column=0, columnspan=4, sticky="w", pady=(4, 4))
+        self.delivery_check.grid(row=9, column=0, columnspan=4, sticky="w", pady=(4, 4))
 
         self.color_var = tk.BooleanVar(value=False)
         self.color_check = tk.Checkbutton(
@@ -216,10 +195,10 @@ class Stating:
             variable=self.color_var,
             command=self._refresh_score_table,
         )
-        self.color_check.grid(row=12, column=0, columnspan=4, sticky="w", pady=(4, 4))
+        self.color_check.grid(row=10, column=0, columnspan=4, sticky="w", pady=(4, 4))
 
         rally_row = tk.Frame(frame)
-        rally_row.grid(row=13, column=0, columnspan=4, sticky="ew", pady=(4, 0))
+        rally_row.grid(row=11, column=0, columnspan=4, sticky="ew", pady=(4, 4))
         tk.Label(rally_row, text="ETラリー.1周回").pack(side="left")
         self.rally_var = tk.StringVar(value=str(self.CHECKPOINT_MIN))
         self.rally_combo = ttk.Combobox(
@@ -231,6 +210,13 @@ class Stating:
         )
         self.rally_combo.pack(side="left", padx=(8, 0))
 
+        self.finish_button = tk.Button(frame, text="フィニィッシュ", command=self.press_finish)
+        self.finish_button.grid(row=12, column=0, columnspan=4, sticky="ew", pady=(12, 4))
+        self.finish_cancel_button = tk.Button(
+            frame, text="フィニィッシュキャンセル", command=self.cancel_finish
+        )
+        self.finish_cancel_button.grid(row=13, column=0, columnspan=4, sticky="ew", pady=(4, 4))
+
         self.result_button = tk.Button(
             frame, text="リザルトポイント", command=self.show_result_points
         )
@@ -240,7 +226,7 @@ class Stating:
         self.display = tk.Toplevel(self.root)
         self.display.title("Go to the Start 表示")
         self.display.configure(background=self.NORMAL_BACKGROUND)
-        self.display.minsize(320, 180)
+        self.display.minsize(640, 360)
         self.display.protocol("WM_DELETE_WINDOW", self.close)
 
         self.content = tk.Frame(self.display, background=self.NORMAL_BACKGROUND)
@@ -267,6 +253,8 @@ class Stating:
         self._refresh_score_table()
         self.display.bind("<Configure>", self._resize_font)
         self._bind_lap_key(self.display)
+        self.display.update_idletasks()
+        self.display.geometry(f"640x{max(360, self.display.winfo_reqheight())}")
 
     def _make_score_label(self, row: int) -> tk.Label:
         label = tk.Label(
@@ -293,6 +281,13 @@ class Stating:
         )
         self.score_table.grid(row=3, column=0, sticky="ew")
         self._item_rows = [self._make_table_row() for _ in range(7)]
+        self._subtotal_rule = tk.Frame(
+            self.score_table,
+            height=2,
+            background=self.NORMAL_FOREGROUND,
+            borderwidth=0,
+            highlightthickness=0,
+        )
         self._subtotal_name, self._subtotal_value = self._make_table_row()
         self._result_name, self._result_value = self._make_table_row()
         self._table_labels = [
@@ -450,6 +445,7 @@ class Stating:
             return
         self._audio_channel.set_volume(self.volume_var.get() / 100)
         self._cue_after_id = self.root.after(round(self._cue_seconds * 1000), self._begin_countup)
+        self._apply_control_access("after_start")
 
     def stop(self) -> None:
         """タイムカウントと音声再生を止める。表示中のタイムと得点は残す。"""
@@ -460,6 +456,8 @@ class Stating:
         self._timer_started_at = None
         self._cancel_scheduled_updates()
         self._stop_audio()
+        self._apply_control_access("all")
+        self._show_settled_time()
 
     def reset(self) -> None:
         self._restore_initial_state()
@@ -476,6 +474,7 @@ class Stating:
         self._cancel_scheduled_updates()
         self._finish_confirmed = False
         self._result_visible = False
+        self._time_compact = False
         self._lap_seconds = None
         if self.lap_label.winfo_manager():
             self.lap_label.configure(text="")
@@ -489,6 +488,7 @@ class Stating:
         self._update_flying_start()
         self._refresh_score_table()
         self._apply_fonts()
+        self._apply_control_access("before_start")
 
     def update(self) -> None:
         duration = self._get_input_seconds()
@@ -517,6 +517,7 @@ class Stating:
             self.lap_label.grid()
         self._refresh_score_table()
         self._apply_fonts()
+        self._apply_control_access("after_lap")
 
     def _clear_lap(self) -> None:
         self._lap_seconds = None
@@ -547,6 +548,7 @@ class Stating:
         self._finish_pending = False
         self._finish_confirmed = True
         self._refresh_score_table()
+        self.stop()
 
     def _cancel_finish_wait(self) -> None:
         self._finish_pending = False
@@ -610,19 +612,24 @@ class Stating:
                 self._hide_table_row(name_label, value_label)
         summary_row = len(entries)
         if self._result_visible:
+            self._subtotal_rule.grid(
+                row=summary_row, column=0, columnspan=2, sticky="ew", pady=(6, 4)
+            )
             self._show_table_row(
-                self._subtotal_name, self._subtotal_value, summary_row, "小計", str(subtotal)
+                self._subtotal_name, self._subtotal_value, summary_row + 1, "小計", str(subtotal)
             )
             lap_seconds = 0.0 if self._lap_seconds is None else self._lap_seconds
             result = self.calculate_result(lap_seconds, subtotal)
             self._show_table_row(
                 self._result_name,
                 self._result_value,
-                summary_row + 1,
+                summary_row + 2,
                 "リザルトポイント",
                 f"{result:.1f}",
             )
         else:
+            if self._subtotal_rule.winfo_manager():
+                self._subtotal_rule.grid_remove()
             self._hide_table_row(self._subtotal_name, self._subtotal_value)
             self._hide_table_row(self._result_name, self._result_value)
         self._apply_score_colors()
@@ -654,6 +661,7 @@ class Stating:
     def _apply_score_colors(self) -> None:
         background = self._display_background
         self.score_table.configure(background=background)
+        self._subtotal_rule.configure(background=self.NORMAL_FOREGROUND)
         for name_label, value_label in (*self._item_rows, (self._subtotal_name, self._subtotal_value)):
             for label in (name_label, value_label):
                 label.configure(background=background, foreground=self.NORMAL_FOREGROUND)
@@ -674,6 +682,79 @@ class Stating:
         """スペースキーでラップを記録し、入力欄にはスペースを入れない。"""
         self.record_lap()
         return "break"
+
+    def _control_tab_order(self) -> list[tk.Misc]:
+        """操作用ウィンドウの上から、各行は左から順のフォーカス順。"""
+        return [
+            self.seconds_entry,
+            self.volume_scale,
+            self.start_button,
+            self.stop_button,
+            self.reset_button,
+            self.update_button,
+            self.flying_check,
+            self.checkpoint_combo,
+            self.lap_button,
+            self.bottle_check,
+            self.delivery_check,
+            self.color_check,
+            self.rally_combo,
+            self.finish_button,
+            self.finish_cancel_button,
+            self.result_button,
+        ]
+
+    def _bind_tab_order(self) -> None:
+        for widget in self._control_tab_order():
+            widget.bind("<Tab>", self._focus_next_control)
+            widget.bind("<Shift-Tab>", self._focus_previous_control)
+
+    def _focus_next_control(self, event: tk.Event) -> str:
+        self._move_control_focus(event.widget, 1)
+        return "break"
+
+    def _focus_previous_control(self, event: tk.Event) -> str:
+        self._move_control_focus(event.widget, -1)
+        return "break"
+
+    def _move_control_focus(self, current: tk.Misc, step: int) -> None:
+        order = self._control_tab_order()
+        try:
+            index = order.index(current)
+        except ValueError:
+            index = -1 if step > 0 else 0
+        for offset in range(1, len(order) + 1):
+            candidate = order[(index + step * offset) % len(order)]
+            if self._widget_is_enabled(candidate):
+                candidate.focus_set()
+                return
+
+    def _apply_control_access(self, phase: str) -> None:
+        """進行状況に応じて、スタートボタンより後の操作を有効または無効にする。"""
+        order = self._control_tab_order()
+        start_index = order.index(self.start_button)
+        lap_index = order.index(self.lap_button)
+        for index, widget in enumerate(order):
+            if index <= start_index:
+                enabled = True
+            elif phase == "before_start":
+                enabled = False
+            elif phase == "after_start":
+                enabled = index <= lap_index
+            elif phase == "after_lap":
+                enabled = widget is not self.result_button
+            else:
+                enabled = True
+            self._set_widget_enabled(widget, enabled)
+
+    def _set_widget_enabled(self, widget: tk.Misc, enabled: bool) -> None:
+        if isinstance(widget, ttk.Combobox):
+            widget.configure(state="readonly" if enabled else "disabled")
+            return
+        widget.configure(state="normal" if enabled else "disabled")
+
+    def _widget_is_enabled(self, widget: tk.Misc) -> bool:
+        return str(widget.cget("state")) != "disabled"
 
     def _bind_lap_key(self, widget: tk.Misc) -> None:
         widget.bind("<space>", self._on_space)
@@ -701,6 +782,8 @@ class Stating:
             self._timer_started_at = None
             self._after_id = None
             self._stop_audio()
+            self._apply_control_access("all")
+            self._show_settled_time()
             return
         self._after_id = self.root.after(50, self._tick)
 
@@ -727,8 +810,13 @@ class Stating:
         self._display_height = max(1, int(event.height))
         self._apply_fonts()
 
+    def _show_settled_time(self) -> None:
+        """確定したタイムを、LAP TIME 以外の行と同じ大きさで表の左列に左詰めする。"""
+        self._time_compact = True
+        self._apply_fonts()
+
     def _apply_fonts(self) -> None:
-        """タイムは従来サイズ、LAP TIME はその50%、他8行は縦幅に収める。"""
+        """タイムは従来サイズ、LAP TIME はその50%、他の行は縦幅に収める。"""
         width_limit = max(1, int(self._display_width * 0.92))
         height_budget = max(self.POINT_LINE_COUNT, self._display_height - self.DISPLAY_VERTICAL_MARGIN)
         timer_size = max(1, int(self._display_width * 0.8 / 5))
@@ -741,7 +829,20 @@ class Stating:
         remaining = max(1, height_budget - timer_height - lap_height)
         point_size = min(lap_size, self._fit_point_font(remaining, width_limit))
         lap_display_size = max(1, round(timer_size * self.LAP_DISPLAY_RATIO * self.LAP_DISPLAY_SCALE))
-        self.timer_label.configure(font=("Arial", timer_size, "bold"))
+        if self._time_compact:
+            self.timer_label.configure(
+                font=("Yu Gothic UI", point_size, "bold"),
+                anchor="w",
+                justify="left",
+            )
+            self.timer_label.grid(row=0, column=0, sticky="w")
+        else:
+            self.timer_label.configure(
+                font=("Arial", timer_size, "bold"),
+                anchor="center",
+                justify="center",
+            )
+            self.timer_label.grid(row=0, column=0, sticky="")
         self.lap_label.configure(font=("Arial", lap_display_size, "bold"))
         self.flying_label.configure(font=("Yu Gothic UI", point_size, "bold"))
         for label in self._table_labels:
