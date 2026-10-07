@@ -42,8 +42,9 @@ class Stating:
     WARNING_FOREGROUND = "yellow"
     # タイムの文字サイズは従来の算出のままにする。
     LAP_FONT_RATIO = 0.85
-    # 表示するラップタイムはタイムの50%。
+    # 表示するラップタイムはタイムの50%を基準に、その約70%の大きさにする。
     LAP_DISPLAY_RATIO = 0.5
+    LAP_DISPLAY_SCALE = 0.7
     # フライングスタート1行 + 得点表7行 + 小計 + リザルトポイント。
     POINT_LINE_COUNT = 10
     DISPLAY_VERTICAL_MARGIN = 12
@@ -90,6 +91,7 @@ class Stating:
         self._finish_after_id: Optional[str] = None
         self._finish_pending = False
         self._finish_confirmed = False
+        self._result_visible = False
 
         self.root = root if root is not None else tk.Tk()
         self.root.title("Go to the Start 操作")
@@ -176,6 +178,7 @@ class Stating:
             self.delivery_check,
             self.color_check,
             self.rally_combo,
+            self.result_button,
         ):
             self._bind_lap_key(widget)
 
@@ -227,6 +230,11 @@ class Stating:
             state="readonly",
         )
         self.rally_combo.pack(side="left", padx=(8, 0))
+
+        self.result_button = tk.Button(
+            frame, text="リザルトポイント", command=self.show_result_points
+        )
+        self.result_button.grid(row=14, column=0, columnspan=4, sticky="ew", pady=(12, 0))
 
     def _build_display_window(self) -> None:
         self.display = tk.Toplevel(self.root)
@@ -431,9 +439,9 @@ class Stating:
             messagebox.showerror("音声読み込みエラー", self._audio_error or "MP4を読み込めません。", parent=self.root)
             return
 
-        self._stop_timer()
-        self._stop_audio()
+        self._restore_initial_state()
         self._duration_seconds = duration
+        self.seconds_var.set(str(duration))
         self._show_elapsed(0.0)
         self._audio_sound.set_volume(self.volume_var.get() / 100)
         self._audio_channel = self._audio_sound.play()
@@ -454,11 +462,33 @@ class Stating:
         self._stop_audio()
 
     def reset(self) -> None:
-        self._stop_timer()
-        self._stop_audio()
+        self._restore_initial_state()
         self._duration_seconds = self.DEFAULT_SECONDS
         self.seconds_var.set(str(self.DEFAULT_SECONDS))
         self._show_elapsed(0.0)
+
+    def _restore_initial_state(self) -> None:
+        """得点操作を初期値に戻し、表示はタイムだけにする。"""
+        self._stop_audio()
+        self._cancel_finish_wait()
+        self._running = False
+        self._timer_started_at = None
+        self._cancel_scheduled_updates()
+        self._finish_confirmed = False
+        self._result_visible = False
+        self._lap_seconds = None
+        if self.lap_label.winfo_manager():
+            self.lap_label.configure(text="")
+            self.lap_label.grid_remove()
+        self.flying_var.set(False)
+        self.bottle_var.set(False)
+        self.delivery_var.set(False)
+        self.color_var.set(False)
+        self.checkpoint_var.set(str(self.CHECKPOINT_MIN))
+        self.rally_var.set(str(self.CHECKPOINT_MIN))
+        self._update_flying_start()
+        self._refresh_score_table()
+        self._apply_fonts()
 
     def update(self) -> None:
         duration = self._get_input_seconds()
@@ -551,7 +581,7 @@ class Stating:
         if checkpoint_points > 0:
             entries.append((f"チェックポイント到達\u3000{checkpoint_count} 箇所", checkpoint_points))
         if self._lap_seconds is not None:
-            entries.append(("☑Lapゲート到達", self.LAP_GATE_POINTS))
+            entries.append(("Lapゲート到達", self.LAP_GATE_POINTS))
         if self._finish_confirmed:
             entries.append(("フィニィッシュ", self.FINISH_POINTS))
         if self.bottle_var.get():
@@ -579,17 +609,28 @@ class Stating:
             else:
                 self._hide_table_row(name_label, value_label)
         summary_row = len(entries)
-        self._show_table_row(self._subtotal_name, self._subtotal_value, summary_row, "小計", str(subtotal))
-        lap_seconds = 0.0 if self._lap_seconds is None else self._lap_seconds
-        result = self.calculate_result(lap_seconds, subtotal)
-        self._show_table_row(
-            self._result_name,
-            self._result_value,
-            summary_row + 1,
-            "リザルトポイント",
-            f"{result:.1f}",
-        )
+        if self._result_visible:
+            self._show_table_row(
+                self._subtotal_name, self._subtotal_value, summary_row, "小計", str(subtotal)
+            )
+            lap_seconds = 0.0 if self._lap_seconds is None else self._lap_seconds
+            result = self.calculate_result(lap_seconds, subtotal)
+            self._show_table_row(
+                self._result_name,
+                self._result_value,
+                summary_row + 1,
+                "リザルトポイント",
+                f"{result:.1f}",
+            )
+        else:
+            self._hide_table_row(self._subtotal_name, self._subtotal_value)
+            self._hide_table_row(self._result_name, self._result_value)
         self._apply_score_colors()
+
+    def show_result_points(self) -> None:
+        """リザルトポイント行を表示し、以降の得点変更でも再計算する。"""
+        self._result_visible = True
+        self._refresh_score_table()
 
     def _show_table_row(
         self,
@@ -699,12 +740,15 @@ class Stating:
         lap_height = self._line_space("Arial", lap_size)
         remaining = max(1, height_budget - timer_height - lap_height)
         point_size = min(lap_size, self._fit_point_font(remaining, width_limit))
-        lap_display_size = max(1, round(timer_size * self.LAP_DISPLAY_RATIO))
+        lap_display_size = max(1, round(timer_size * self.LAP_DISPLAY_RATIO * self.LAP_DISPLAY_SCALE))
         self.timer_label.configure(font=("Arial", timer_size, "bold"))
         self.lap_label.configure(font=("Arial", lap_display_size, "bold"))
         self.flying_label.configure(font=("Yu Gothic UI", point_size, "bold"))
         for label in self._table_labels:
             label.configure(font=("Yu Gothic UI", point_size, "bold"))
+        result_font = ("Yu Gothic UI", lap_display_size, "bold")
+        self._result_name.configure(font=result_font)
+        self._result_value.configure(font=result_font)
 
     def _fit_timer_and_lap(self, timer_size: int, height_budget: int) -> tuple[int, int]:
         """タイムと LAP TIME を、8行分の高さを残せるサイズまで縮める。"""
