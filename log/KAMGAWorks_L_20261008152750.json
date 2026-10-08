@@ -1,0 +1,214 @@
+{
+  "team_name": "KAMGAWorks",
+  "course": "L",
+  "started_at": "20261008152750",
+  "window": {
+    "width": 2560,
+    "height": 1369
+  },
+  "background": "black",
+  "header": {
+    "text": "KAMGAWorks　L",
+    "font": [
+      "Yu Gothic UI",
+      36,
+      "bold"
+    ],
+    "foreground": "orange"
+  },
+  "timer": {
+    "text": "37.6",
+    "font": [
+      "Yu Gothic UI",
+      29,
+      "bold"
+    ],
+    "foreground": "white",
+    "anchor": "w",
+    "justify": "left",
+    "compact": true
+  },
+  "lap": {
+    "text": "LAP TIME:15.4",
+    "font": [
+      "Arial",
+      97,
+      "bold"
+    ],
+    "foreground": "white",
+    "visible": true
+  },
+  "rows": [
+    {
+      "name": "走行ポイント",
+      "value": "19",
+      "fraction": ".6",
+      "foreground": "white",
+      "value_foreground": "white",
+      "name_font": [
+        "Yu Gothic UI",
+        29,
+        "bold"
+      ],
+      "value_font": [
+        "Yu Gothic UI",
+        29,
+        "bold"
+      ]
+    },
+    {
+      "name": "フライングスタート",
+      "value": "-35",
+      "fraction": "",
+      "foreground": "white",
+      "value_foreground": "white",
+      "name_font": [
+        "Yu Gothic UI",
+        29,
+        "bold"
+      ],
+      "value_font": [
+        "Yu Gothic UI",
+        29,
+        "bold"
+      ]
+    },
+    {
+      "name": "チェックポイント到達　3 本",
+      "value": "6",
+      "fraction": "",
+      "foreground": "white",
+      "value_foreground": "white",
+      "name_font": [
+        "Yu Gothic UI",
+        29,
+        "bold"
+      ],
+      "value_font": [
+        "Yu Gothic UI",
+        29,
+        "bold"
+      ]
+    },
+    {
+      "name": "Lapゲート到達",
+      "value": "3",
+      "fraction": "",
+      "foreground": "white",
+      "value_foreground": "white",
+      "name_font": [
+        "Yu Gothic UI",
+        29,
+        "bold"
+      ],
+      "value_font": [
+        "Yu Gothic UI",
+        29,
+        "bold"
+      ]
+    },
+    {
+      "name": "フィニィッシュ",
+      "value": "3",
+      "fraction": "",
+      "foreground": "white",
+      "value_foreground": "white",
+      "name_font": [
+        "Yu Gothic UI",
+        29,
+        "bold"
+      ],
+      "value_font": [
+        "Yu Gothic UI",
+        29,
+        "bold"
+      ]
+    },
+    {
+      "name": "ボトル押し出し",
+      "value": "5",
+      "fraction": "",
+      "foreground": "white",
+      "value_foreground": "white",
+      "name_font": [
+        "Yu Gothic UI",
+        29,
+        "bold"
+      ],
+      "value_font": [
+        "Yu Gothic UI",
+        29,
+        "bold"
+      ]
+    },
+    {
+      "name": "ボトル.デリバリー",
+      "value": "1",
+      "fraction": "",
+      "foreground": "white",
+      "value_foreground": "white",
+      "name_font": [
+        "Yu Gothic UI",
+        29,
+        "bold"
+      ],
+      "value_font": [
+        "Yu Gothic UI",
+        29,
+        "bold"
+      ]
+    },
+    {
+      "name": "ボトル.色一致",
+      "value": "5",
+      "fraction": "",
+      "foreground": "white",
+      "value_foreground": "white",
+      "name_font": [
+        "Yu Gothic UI",
+        29,
+        "bold"
+      ],
+      "value_font": [
+        "Yu Gothic UI",
+        29,
+        "bold"
+      ]
+    },
+    {
+      "name": "ETラリー 3周回",
+      "value": "15",
+      "fraction": "",
+      "foreground": "white",
+      "value_foreground": "white",
+      "name_font": [
+        "Yu Gothic UI",
+        29,
+        "bold"
+      ],
+      "value_font": [
+        "Yu Gothic UI",
+        29,
+        "bold"
+      ]
+    }
+  ],
+  "result": {
+    "name": "リザルトポイント",
+    "value": "22.6",
+    "fraction": "",
+    "foreground": "yellow",
+    "value_foreground": "yellow",
+    "name_font": [
+      "Yu Gothic UI",
+      97,
+      "bold"
+    ],
+    "value_font": [
+      "Yu Gothic UI",
+      97,
+      "bold"
+    ]
+  },
+  "result_rule": true
+}

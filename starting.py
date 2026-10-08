@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from array import array
+from datetime import datetime
 import json
 import math
 import os
@@ -94,6 +95,8 @@ class Stating:
         self._finish_pending = False
         self._finish_confirmed = False
         self._result_visible = False
+        self._save_enabled = False
+        self._started_at: Optional[datetime] = None
         self._time_compact = False
 
         self.root = root if root is not None else tk.Tk()
@@ -249,6 +252,8 @@ class Stating:
             frame, text="リザルトポイント", command=self.show_result_points
         )
         self.result_button.grid(row=16, column=0, columnspan=4, sticky="ew", pady=(12, 0))
+        self.save_button = tk.Button(frame, text="保存", command=self.save_display)
+        self.save_button.grid(row=17, column=0, columnspan=4, sticky="ew", pady=(12, 0))
 
     def _build_display_window(self) -> None:
         self.display = tk.Toplevel(self.root)
@@ -283,6 +288,17 @@ class Stating:
         )
         self.team_header.grid(row=0, column=0, pady=(0, 8))
         self._update_team_header()
+        self.timer_label.grid(row=1, column=0)
+        self.lap_label = self._make_score_label(2)
+        self.lap_label.grid_remove()
+        self._build_score_table()
+        self.checkpoint_var.trace_add("write", self._refresh_score_table)
+        self.rally_var.trace_add("write", self._refresh_score_table)
+        self._refresh_score_table()
+        self.display.bind("<Configure>", self._resize_font)
+        self._bind_lap_key(self.display)
+        self.display.update_idletasks()
+        self.display.geometry(f"640x{max(360, self.display.winfo_reqheight())}")
 
     def _team_header_text(self) -> str:
         name = self.team_var.get().strip()
@@ -295,17 +311,6 @@ class Stating:
         if not hasattr(self, "team_header"):
             return
         self.team_header.configure(text=self._team_header_text(), foreground=self.TEAM_FOREGROUND)
-        self.timer_label.grid(row=1, column=0)
-        self.lap_label = self._make_score_label(2)
-        self.lap_label.grid_remove()
-        self._build_score_table()
-        self.checkpoint_var.trace_add("write", self._refresh_score_table)
-        self.rally_var.trace_add("write", self._refresh_score_table)
-        self._refresh_score_table()
-        self.display.bind("<Configure>", self._resize_font)
-        self._bind_lap_key(self.display)
-        self.display.update_idletasks()
-        self.display.geometry(f"640x{max(360, self.display.winfo_reqheight())}")
 
     def _make_score_label(self, row: int) -> tk.Label:
         label = tk.Label(
@@ -561,6 +566,7 @@ class Stating:
             return
         self._audio_channel.set_volume(self.volume_var.get() / 100)
         self._cue_after_id = self.root.after(round(self._cue_seconds * 1000), self._begin_countup)
+        self._started_at = datetime.now()
         self._apply_control_access("after_start")
 
     def stop(self) -> None:
@@ -590,6 +596,8 @@ class Stating:
         self._cancel_scheduled_updates()
         self._finish_confirmed = False
         self._result_visible = False
+        self._save_enabled = False
+        self._started_at = None
         self._time_compact = False
         self._lap_seconds = None
         if self.lap_label.winfo_manager():
@@ -756,7 +764,102 @@ class Stating:
     def show_result_points(self) -> None:
         """リザルトポイント行を表示し、以降の得点変更でも再計算する。"""
         self._result_visible = True
+        self._save_enabled = True
         self._refresh_score_table()
+        self._set_widget_enabled(self.save_button, True)
+
+    def save_display(self) -> None:
+        """表示用ウィンドウの内容を、再現用のJSONとして log フォルダへ書く。"""
+        if self._started_at is None:
+            messagebox.showerror("保存エラー", "スタート後に保存してください。", parent=self.root)
+            return
+        self.display.update_idletasks()
+        snapshot = self._display_snapshot()
+        folder = Path(__file__).resolve().parent / "log"
+        folder.mkdir(parents=True, exist_ok=True)
+        path = folder / self._log_filename()
+        path.write_text(json.dumps(snapshot, ensure_ascii=False, indent=2), encoding="utf-8")
+        messagebox.showinfo("保存", f"保存しました。\n{path.name}", parent=self.root)
+
+    def _log_filename(self) -> str:
+        """チーム名_コース_スタート年月日時分秒.json（日時は14桁）。"""
+        started = self._started_at or datetime.now()
+        team = self._filename_part(self.team_var.get().strip() or "team")
+        course = self.course_var.get() if self.course_var.get() in {"L", "R"} else "L"
+        return f"{team}_{course}_{started.strftime('%Y%m%d%H%M%S')}.json"
+
+    @staticmethod
+    def _filename_part(value: str) -> str:
+        sanitized = "".join("_" if char in '<>:"/\\|?*' or ord(char) < 32 else char for char in value)
+        sanitized = sanitized.strip(" .")
+        return sanitized or "team"
+
+    def _display_snapshot(self) -> dict:
+        """別プログラムが表示用ウィンドウを再現するための内容。"""
+        rows = []
+        running = self._snapshot_row(self._running_name, self._running_value, self._running_fraction)
+        if running is not None:
+            rows.append(running)
+        for name_label, value_label in self._item_rows:
+            item = self._snapshot_row(name_label, value_label)
+            if item is not None:
+                rows.append(item)
+        return {
+            "team_name": self.team_var.get(),
+            "course": self.course_var.get(),
+            "started_at": self._started_at.strftime("%Y%m%d%H%M%S") if self._started_at else "",
+            "window": {
+                "width": max(1, self.display.winfo_width()),
+                "height": max(1, self.display.winfo_height()),
+            },
+            "background": self._display_background,
+            "header": self._snapshot_label(self.team_header),
+            "timer": {
+                **self._snapshot_label(self.timer_label),
+                "anchor": str(self.timer_label.cget("anchor")),
+                "justify": str(self.timer_label.cget("justify")),
+                "compact": self._time_compact,
+            },
+            "lap": {
+                **self._snapshot_label(self.lap_label),
+                "visible": self.lap_label.winfo_manager() != "",
+            },
+            "rows": rows,
+            "result": self._snapshot_row(self._result_name, self._result_value),
+            "result_rule": self._subtotal_rule.winfo_manager() != "",
+        }
+
+    def _snapshot_label(self, label: tk.Label) -> dict:
+        font = tkfont.Font(font=label.cget("font"))
+        actual = font.actual()
+        return {
+            "text": label.cget("text"),
+            "font": [actual["family"], int(actual["size"]), actual["weight"]],
+            "foreground": str(label.cget("foreground")),
+        }
+
+    def _snapshot_row(
+        self,
+        name_label: tk.Label,
+        value_label: tk.Label,
+        fraction_label: Optional[tk.Label] = None,
+    ) -> Optional[dict]:
+        if name_label.winfo_manager() == "":
+            return None
+        fraction = ""
+        if fraction_label is not None and fraction_label.winfo_manager() != "":
+            fraction = fraction_label.cget("text")
+        name = self._snapshot_label(name_label)
+        value = self._snapshot_label(value_label)
+        return {
+            "name": name["text"],
+            "value": value["text"],
+            "fraction": fraction,
+            "foreground": name["foreground"],
+            "value_foreground": value["foreground"],
+            "name_font": name["font"],
+            "value_font": value["font"],
+        }
 
     def _show_table_row(
         self,
@@ -828,6 +931,7 @@ class Stating:
             self.finish_button,
             self.finish_cancel_button,
             self.result_button,
+            self.save_button,
         ]
 
     def _bind_tab_order(self) -> None:
@@ -860,7 +964,9 @@ class Stating:
         order = self._control_tab_order()
         start_index = order.index(self.start_button)
         for index, widget in enumerate(order):
-            if index <= start_index:
+            if widget is self.save_button:
+                enabled = self._save_enabled and phase != "before_start"
+            elif index <= start_index:
                 enabled = True
             elif phase == "before_start":
                 enabled = False
