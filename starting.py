@@ -53,7 +53,7 @@ class Stating:
     DISPLAY_VERTICAL_MARGIN = 12
     RESULT_BASE = 35.0
     FLYING_START_POINTS = -35
-    CHECKPOINT_POINTS = 4
+    CHECKPOINT_POINTS = 2
     CHECKPOINT_MIN = 0
     CHECKPOINT_MAX = 3
     LAP_GATE_POINTS = 3
@@ -463,8 +463,8 @@ class Stating:
 
     @staticmethod
     def running_points(lap_seconds: float) -> float:
-        """35.0 から走行タイムを引いた走行ポイント。"""
-        return Stating.RESULT_BASE - max(0.0, lap_seconds)
+        """走行ポイントは 35.0 から走行タイムを引き、0未満にはしない。"""
+        return max(0.0, Stating.RESULT_BASE - max(0.0, lap_seconds))
 
     @staticmethod
     def calculate_result(running_points: float, subtotal: int) -> float:
@@ -632,7 +632,6 @@ class Stating:
             self.lap_label.grid()
         self._refresh_score_table()
         self._apply_fonts()
-        self._apply_control_access("after_lap")
 
     def _clear_lap(self) -> None:
         self._lap_seconds = None
@@ -712,7 +711,8 @@ class Stating:
             self._hide_table_row(self._running_name, self._running_value)
             if self._running_fraction.winfo_manager():
                 self._running_fraction.grid_remove()
-            running = self.running_points(0.0)
+            # Lap未確定のリザルトは走行タイム120秒とし、走行ポイントは0になる。
+            running = self.running_points(float(self.MAX_SECONDS))
         else:
             running = self.running_points(self._lap_seconds)
             whole, fraction = f"{running:.1f}".split(".", 1)
@@ -859,16 +859,11 @@ class Stating:
         """進行状況に応じて、スタートボタンより後の操作を有効または無効にする。"""
         order = self._control_tab_order()
         start_index = order.index(self.start_button)
-        lap_index = order.index(self.lap_button)
         for index, widget in enumerate(order):
             if index <= start_index:
                 enabled = True
             elif phase == "before_start":
                 enabled = False
-            elif phase == "after_start":
-                enabled = index <= lap_index
-            elif phase == "after_lap":
-                enabled = widget is not self.result_button
             else:
                 enabled = True
             self._set_widget_enabled(widget, enabled)
