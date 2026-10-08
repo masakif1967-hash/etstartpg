@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from array import array
+import json
 import math
 import os
 from pathlib import Path
@@ -36,6 +37,8 @@ class Stating:
     # 添付音源の末尾「Go」の発話長（開始位置から言い終わりまで）。
     LAST_GO_DURATION_SECONDS = 0.3
     AUDIO_FILE_NAME = "ETロボコン120秒（スタート合図から120秒タイムアップ）.mp4"
+    SETTINGS_FILE_NAME = "starting.ini"
+    TEAM_FOREGROUND = "orange"
     NORMAL_BACKGROUND = "black"
     FINISHED_BACKGROUND = "red"
     NORMAL_FOREGROUND = "white"
@@ -99,6 +102,8 @@ class Stating:
         self.root.option_add("*Font", "{Yu Gothic UI} 12")
         self.root.protocol("WM_DELETE_WINDOW", self.close)
 
+        self._teams: list[tuple[str, float]] = []
+        self._load_settings()
         self._load_mp4_audio()
         self._build_control_window()
         self._build_display_window()
@@ -108,14 +113,38 @@ class Stating:
         frame = tk.Frame(self.root, padx=16, pady=16)
         frame.grid(sticky="nsew")
 
+        team_names = [name for name, _score in self._teams]
+        self.team_var = tk.StringVar(value=team_names[0] if team_names else "")
+        self.team_combo = ttk.Combobox(
+            frame,
+            textvariable=self.team_var,
+            values=team_names,
+            state="readonly",
+        )
+        self.team_combo.grid(row=0, column=0, columnspan=4, sticky="ew", pady=(0, 4))
+        self.team_var.trace_add("write", self._update_team_header)
+
+        course_row = tk.Frame(frame)
+        course_row.grid(row=1, column=0, columnspan=4, sticky="w", pady=(0, 12))
+        self.course_var = tk.StringVar(value="L")
+        self.course_var.trace_add("write", self._update_team_header)
+        self.course_l = tk.Radiobutton(
+            course_row, text="L", variable=self.course_var, value="L", command=self._update_team_header
+        )
+        self.course_l.pack(side="left")
+        self.course_r = tk.Radiobutton(
+            course_row, text="R", variable=self.course_var, value="R", command=self._update_team_header
+        )
+        self.course_r.pack(side="left", padx=(12, 0))
+
         tk.Label(frame, text="カウントアップ時間（秒）").grid(
-            row=0, column=0, columnspan=4, sticky="w"
+            row=2, column=0, columnspan=4, sticky="w"
         )
         self.seconds_var = tk.StringVar(value=str(self.DEFAULT_SECONDS))
         self.seconds_entry = tk.Entry(frame, textvariable=self.seconds_var, width=10)
-        self.seconds_entry.grid(row=1, column=0, columnspan=4, sticky="ew", pady=(4, 12))
+        self.seconds_entry.grid(row=3, column=0, columnspan=4, sticky="ew", pady=(4, 12))
 
-        tk.Label(frame, text="音量").grid(row=2, column=0, columnspan=4, sticky="w")
+        tk.Label(frame, text="音量").grid(row=4, column=0, columnspan=4, sticky="w")
         self.volume_var = tk.IntVar(value=self.DEFAULT_VOLUME)
         self.volume_scale = tk.Scale(
             frame,
@@ -125,16 +154,16 @@ class Stating:
             variable=self.volume_var,
             command=self._change_volume,
         )
-        self.volume_scale.grid(row=3, column=0, columnspan=4, sticky="ew", pady=(0, 10))
+        self.volume_scale.grid(row=5, column=0, columnspan=4, sticky="ew", pady=(0, 10))
 
         self.start_button = tk.Button(frame, text="スタート", command=self.start)
-        self.start_button.grid(row=4, column=0, padx=(0, 4))
+        self.start_button.grid(row=6, column=0, padx=(0, 4))
         self.stop_button = tk.Button(frame, text="ストップ", command=self.stop)
-        self.stop_button.grid(row=4, column=1, padx=4)
+        self.stop_button.grid(row=6, column=1, padx=4)
         self.reset_button = tk.Button(frame, text="リセット", command=self.reset)
-        self.reset_button.grid(row=4, column=2, padx=4)
+        self.reset_button.grid(row=6, column=2, padx=4)
         self.update_button = tk.Button(frame, text="更新", command=self.update)
-        self.update_button.grid(row=4, column=3, padx=(4, 0))
+        self.update_button.grid(row=6, column=3, padx=(4, 0))
 
         self.flying_var = tk.BooleanVar(value=False)
         self.flying_check = tk.Checkbutton(
@@ -143,10 +172,10 @@ class Stating:
             variable=self.flying_var,
             command=self._refresh_score_table,
         )
-        self.flying_check.grid(row=5, column=0, columnspan=4, sticky="w", pady=(12, 4))
+        self.flying_check.grid(row=7, column=0, columnspan=4, sticky="w", pady=(12, 4))
 
         checkpoint_row = tk.Frame(frame)
-        checkpoint_row.grid(row=6, column=0, columnspan=4, sticky="ew", pady=(4, 0))
+        checkpoint_row.grid(row=8, column=0, columnspan=4, sticky="ew", pady=(4, 0))
         tk.Label(checkpoint_row, text="チェックポイント到達").pack(side="left")
         self.checkpoint_var = tk.StringVar(value=str(self.CHECKPOINT_MIN))
         self.checkpoint_combo = ttk.Combobox(
@@ -159,7 +188,7 @@ class Stating:
         self.checkpoint_combo.pack(side="left", padx=(8, 0))
 
         self.lap_button = tk.Button(frame, text="Lap", command=self.record_lap)
-        self.lap_button.grid(row=7, column=0, columnspan=4, sticky="ew", pady=(12, 0))
+        self.lap_button.grid(row=9, column=0, columnspan=4, sticky="ew", pady=(12, 0))
         self._build_score_controls(frame)
         self._bind_lap_key(self.root)
         for widget in self._control_tab_order():
@@ -176,7 +205,7 @@ class Stating:
             variable=self.bottle_var,
             command=self._refresh_score_table,
         )
-        self.bottle_check.grid(row=8, column=0, columnspan=4, sticky="w", pady=(12, 4))
+        self.bottle_check.grid(row=10, column=0, columnspan=4, sticky="w", pady=(12, 4))
 
         self.delivery_var = tk.BooleanVar(value=False)
         self.delivery_check = tk.Checkbutton(
@@ -185,7 +214,7 @@ class Stating:
             variable=self.delivery_var,
             command=self._refresh_score_table,
         )
-        self.delivery_check.grid(row=9, column=0, columnspan=4, sticky="w", pady=(4, 4))
+        self.delivery_check.grid(row=11, column=0, columnspan=4, sticky="w", pady=(4, 4))
 
         self.color_var = tk.BooleanVar(value=False)
         self.color_check = tk.Checkbutton(
@@ -194,10 +223,10 @@ class Stating:
             variable=self.color_var,
             command=self._refresh_score_table,
         )
-        self.color_check.grid(row=10, column=0, columnspan=4, sticky="w", pady=(4, 4))
+        self.color_check.grid(row=12, column=0, columnspan=4, sticky="w", pady=(4, 4))
 
         rally_row = tk.Frame(frame)
-        rally_row.grid(row=11, column=0, columnspan=4, sticky="ew", pady=(4, 4))
+        rally_row.grid(row=13, column=0, columnspan=4, sticky="ew", pady=(4, 4))
         tk.Label(rally_row, text="ETラリー（周回）").pack(side="left")
         self.rally_var = tk.StringVar(value=str(self.CHECKPOINT_MIN))
         self.rally_combo = ttk.Combobox(
@@ -210,16 +239,16 @@ class Stating:
         self.rally_combo.pack(side="left", padx=(8, 0))
 
         self.finish_button = tk.Button(frame, text="フィニィッシュ", command=self.press_finish)
-        self.finish_button.grid(row=12, column=0, columnspan=4, sticky="ew", pady=(12, 4))
+        self.finish_button.grid(row=14, column=0, columnspan=4, sticky="ew", pady=(12, 4))
         self.finish_cancel_button = tk.Button(
             frame, text="フィニィッシュキャンセル", command=self.cancel_finish
         )
-        self.finish_cancel_button.grid(row=13, column=0, columnspan=4, sticky="ew", pady=(4, 4))
+        self.finish_cancel_button.grid(row=15, column=0, columnspan=4, sticky="ew", pady=(4, 4))
 
         self.result_button = tk.Button(
             frame, text="リザルトポイント", command=self.show_result_points
         )
-        self.result_button.grid(row=14, column=0, columnspan=4, sticky="ew", pady=(12, 0))
+        self.result_button.grid(row=16, column=0, columnspan=4, sticky="ew", pady=(12, 0))
 
     def _build_display_window(self) -> None:
         self.display = tk.Toplevel(self.root)
@@ -241,8 +270,33 @@ class Stating:
             padx=0,
             pady=0,
         )
-        self.timer_label.grid(row=0, column=0)
-        self.lap_label = self._make_score_label(1)
+        self.team_header = tk.Label(
+            self.content,
+            text="",
+            background=self.NORMAL_BACKGROUND,
+            foreground=self.TEAM_FOREGROUND,
+            font=("Yu Gothic UI", 28, "bold"),
+            borderwidth=0,
+            highlightthickness=0,
+            padx=0,
+            pady=0,
+        )
+        self.team_header.grid(row=0, column=0, pady=(0, 8))
+        self._update_team_header()
+
+    def _team_header_text(self) -> str:
+        name = self.team_var.get().strip()
+        course = self.course_var.get()
+        if name and course:
+            return f"{name}　{course}"
+        return name or course
+
+    def _update_team_header(self, *_args: object) -> None:
+        if not hasattr(self, "team_header"):
+            return
+        self.team_header.configure(text=self._team_header_text(), foreground=self.TEAM_FOREGROUND)
+        self.timer_label.grid(row=1, column=0)
+        self.lap_label = self._make_score_label(2)
         self.lap_label.grid_remove()
         self._build_score_table()
         self.checkpoint_var.trace_add("write", self._refresh_score_table)
@@ -276,7 +330,7 @@ class Stating:
             borderwidth=0,
             highlightthickness=0,
         )
-        self.score_table.grid(row=2, column=0, sticky="ew")
+        self.score_table.grid(row=3, column=0, sticky="ew")
         self._running_name, self._running_value = self._make_table_row()
         self._running_fraction = self._make_fraction_label()
         self._item_rows = [self._make_table_row() for _ in range(8)]
@@ -347,6 +401,50 @@ class Stating:
         if not cls.MIN_SECONDS <= seconds <= cls.MAX_SECONDS:
             raise ValueError("カウントアップ時間は0～120の範囲で入力してください。")
         return seconds
+
+    @classmethod
+    def parse_settings(cls, text: str) -> list[tuple[str, float]]:
+        """starting.ini からチーム名とモデル評価点を読む。"""
+        try:
+            data = json.loads(text)
+        except json.JSONDecodeError as error:
+            raise ValueError(f"starting.ini のJSONが不正です: {error}") from error
+        teams = data.get("teams") if isinstance(data, dict) else None
+        if not isinstance(teams, list) or not teams:
+            raise ValueError("starting.ini の teams にチームを1件以上入れてください。")
+        parsed: list[tuple[str, float]] = []
+        seen: set[str] = set()
+        for item in teams:
+            if not isinstance(item, dict):
+                raise ValueError("チームの定義が不正です。")
+            name = item.get("TeamName")
+            score = item.get("model_score")
+            if not isinstance(name, str) or not name.strip():
+                raise ValueError("TeamName は空でない文字列にしてください。")
+            name = name.strip()
+            if name in seen:
+                raise ValueError(f"TeamName が重複しています: {name}")
+            if isinstance(score, bool) or not isinstance(score, (int, float)):
+                raise ValueError(f"{name} の model_score は小数第1位の数値にしてください。")
+            rounded = round(float(score), 1)
+            if abs(float(score) - rounded) > 1e-9:
+                raise ValueError(f"{name} の model_score は小数第1位までにしてください。")
+            parsed.append((name, rounded))
+            seen.add(name)
+        return parsed
+
+    def _load_settings(self) -> None:
+        path = Path(__file__).resolve().parent / self.SETTINGS_FILE_NAME
+        try:
+            self._teams = self.parse_settings(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as error:
+            self._teams = []
+            messagebox.showerror("初期設定エラー", str(error), parent=self.root)
+        self._model_scores = {name: score for name, score in self._teams}
+
+    def selected_model_score(self) -> Optional[float]:
+        """選択中のチームのモデル評価点。未選択なら None。"""
+        return self._model_scores.get(self.team_var.get())
 
     @staticmethod
     def format_elapsed(seconds: float) -> str:
@@ -711,6 +809,9 @@ class Stating:
     def _control_tab_order(self) -> list[tk.Misc]:
         """操作用ウィンドウの上から、各行は左から順のフォーカス順。"""
         return [
+            self.team_combo,
+            self.course_l,
+            self.course_r,
             self.seconds_entry,
             self.volume_scale,
             self.start_button,
@@ -824,6 +925,7 @@ class Stating:
         self.display.configure(background=background)
         self.content.configure(background=background)
         self.timer_label.configure(background=background, foreground=foreground)
+        self.team_header.configure(background=background, foreground=self.TEAM_FOREGROUND)
         self.lap_label.configure(background=background, foreground=self.NORMAL_FOREGROUND)
         self._apply_score_colors()
 
@@ -842,7 +944,16 @@ class Stating:
     def _apply_fonts(self) -> None:
         """タイムは従来サイズ、LAP TIME はその50%、他の行は縦幅に収める。"""
         width_limit = max(1, int(self._display_width * 0.92))
-        height_budget = max(self.POINT_LINE_COUNT, self._display_height - self.DISPLAY_VERTICAL_MARGIN)
+        header_size = self._fit_header_font(width_limit)
+        header_height = self._line_space("Yu Gothic UI", header_size)
+        height_budget = max(
+            self.POINT_LINE_COUNT,
+            self._display_height - self.DISPLAY_VERTICAL_MARGIN - header_height,
+        )
+        self.team_header.configure(
+            font=("Yu Gothic UI", header_size, "bold"),
+            foreground=self.TEAM_FOREGROUND,
+        )
         timer_size = max(1, int(self._display_width * 0.8 / 5))
         lap_limit = self._largest_fitting_size("Arial", "LAP TIME:120.0", width_limit)
         if lap_limit > 1:
@@ -859,20 +970,28 @@ class Stating:
                 anchor="w",
                 justify="left",
             )
-            self.timer_label.grid(row=0, column=0, sticky="w")
+            self.timer_label.grid(row=1, column=0, sticky="w")
         else:
             self.timer_label.configure(
                 font=("Arial", timer_size, "bold"),
                 anchor="center",
                 justify="center",
             )
-            self.timer_label.grid(row=0, column=0, sticky="")
+            self.timer_label.grid(row=1, column=0, sticky="")
         self.lap_label.configure(font=("Arial", lap_display_size, "bold"))
         for label in self._table_labels:
             label.configure(font=("Yu Gothic UI", point_size, "bold"))
         result_font = ("Yu Gothic UI", lap_display_size, "bold")
         self._result_name.configure(font=result_font)
         self._result_value.configure(font=result_font)
+
+    def _fit_header_font(self, width_limit: int) -> int:
+        """チーム名とコースの一行が横幅に収まる文字サイズを返す。"""
+        text = self._team_header_text() or "チーム　L"
+        size = min(36, max(1, width_limit // 8))
+        while size > 1 and self._text_width("Yu Gothic UI", size, text) > width_limit:
+            size -= 1
+        return size
 
     def _fit_timer_and_lap(self, timer_size: int, height_budget: int) -> tuple[int, int]:
         """タイムと LAP TIME を、8行分の高さを残せるサイズまで縮める。"""
