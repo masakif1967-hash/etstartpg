@@ -45,7 +45,7 @@ class Stating:
     # 表示するラップタイムはタイムの50%を基準に、その約70%の大きさにする。
     LAP_DISPLAY_RATIO = 0.5
     LAP_DISPLAY_SCALE = 0.7
-    # フライングスタート1行 + 得点表7行 + 小計 + リザルトポイント。
+    # 走行ポイント + フライングスタート + 得点表7行 + リザルトポイント。
     POINT_LINE_COUNT = 10
     DISPLAY_VERTICAL_MARGIN = 12
     RESULT_BASE = 35.0
@@ -60,7 +60,6 @@ class Stating:
     BOTTLE_DELIVERY_POINTS = 1
     BOTTLE_COLOR_POINTS = 5
     RALLY_POINTS = 5
-    FLYING_START_TEXT = f"フライングスタート\u3000{FLYING_START_POINTS}ポイント"
     LAP_GATE_TEXT = f"LAPゲート到達 {LAP_GATE_POINTS}ポイント"
     FINISH_TEXT = f"フィニィッシュ\u3000{FINISH_POINTS}ポイント"
     BOTTLE_PUSH_TEXT = f"ボトル押し出し\u3000{BOTTLE_PUSH_POINTS}ポイント"
@@ -142,7 +141,7 @@ class Stating:
             frame,
             text="フライングスタート",
             variable=self.flying_var,
-            command=self._update_flying_start,
+            command=self._refresh_score_table,
         )
         self.flying_check.grid(row=5, column=0, columnspan=4, sticky="w", pady=(12, 4))
 
@@ -245,8 +244,6 @@ class Stating:
         self.timer_label.grid(row=0, column=0)
         self.lap_label = self._make_score_label(1)
         self.lap_label.grid_remove()
-        self.flying_label = self._make_score_label(2)
-        self.flying_label.grid_remove()
         self._build_score_table()
         self.checkpoint_var.trace_add("write", self._refresh_score_table)
         self.rally_var.trace_add("write", self._refresh_score_table)
@@ -279,8 +276,9 @@ class Stating:
             borderwidth=0,
             highlightthickness=0,
         )
-        self.score_table.grid(row=3, column=0, sticky="ew")
-        self._item_rows = [self._make_table_row() for _ in range(7)]
+        self.score_table.grid(row=2, column=0, sticky="ew")
+        self._running_name, self._running_value = self._make_table_row()
+        self._item_rows = [self._make_table_row() for _ in range(8)]
         self._subtotal_rule = tk.Frame(
             self.score_table,
             height=2,
@@ -288,13 +286,12 @@ class Stating:
             borderwidth=0,
             highlightthickness=0,
         )
-        self._subtotal_name, self._subtotal_value = self._make_table_row()
         self._result_name, self._result_value = self._make_table_row()
         self._table_labels = [
             label
             for pair in (
+                (self._running_name, self._running_value),
                 *self._item_rows,
-                (self._subtotal_name, self._subtotal_value),
                 (self._result_name, self._result_value),
             )
             for label in pair
@@ -351,9 +348,14 @@ class Stating:
         return f"ETラリー.{count}周回\u3000 {points}ポイント"
 
     @staticmethod
-    def calculate_result(lap_seconds: float, subtotal: int) -> float:
-        """35.0 からラップタイムを引き、小計を加えたリザルトポイント。"""
-        return Stating.RESULT_BASE - max(0.0, lap_seconds) + subtotal
+    def running_points(lap_seconds: float) -> float:
+        """35.0 から走行タイムを引いた走行ポイント。"""
+        return Stating.RESULT_BASE - max(0.0, lap_seconds)
+
+    @staticmethod
+    def calculate_result(running_points: float, subtotal: int) -> float:
+        """表示中の走行ポイントに、表の得点合計を加える。"""
+        return running_points + subtotal
 
     @classmethod
     def detect_last_go_cue(cls, wav_path: Path) -> float:
@@ -485,7 +487,6 @@ class Stating:
         self.color_var.set(False)
         self.checkpoint_var.set(str(self.CHECKPOINT_MIN))
         self.rally_var.set(str(self.CHECKPOINT_MIN))
-        self._update_flying_start()
         self._refresh_score_table()
         self._apply_fonts()
         self._apply_control_access("before_start")
@@ -563,21 +564,11 @@ class Stating:
     def _checkpoint_count(self) -> int:
         return self._selected_count(self.checkpoint_var)
 
-    def _set_score_line(self, label: tk.Label, visible: bool, text: str) -> None:
-        if visible:
-            label.configure(text=text)
-            if not label.winfo_manager():
-                label.grid()
-        elif label.winfo_manager():
-            label.grid_remove()
-
-    def _update_flying_start(self) -> None:
-        """チェックONのとき、LAP TIMEの次の行へフライングスタートを出す。"""
-        self._set_score_line(self.flying_label, self.flying_var.get(), self.FLYING_START_TEXT)
-
     def _score_table_entries(self) -> list[tuple[str, int]]:
-        """表示中の得点行を、チェックポイント到達から順に返す。"""
+        """表示中の得点行を、フライングスタートから順に返す。"""
         entries: list[tuple[str, int]] = []
+        if self.flying_var.get():
+            entries.append(("フライングスタート", self.FLYING_START_POINTS))
         checkpoint_count = self._checkpoint_count()
         checkpoint_points = checkpoint_count * self.CHECKPOINT_POINTS
         if checkpoint_points > 0:
@@ -599,38 +590,47 @@ class Stating:
         return entries
 
     def _refresh_score_table(self, *_args: object) -> None:
-        """得点行と、小計・リザルトポイントを最新の値で並べる。"""
+        """得点行とリザルトポイントを最新の値で並べる。"""
         if not hasattr(self, "_item_rows"):
             return
+        next_row = 0
+        if self._lap_seconds is None:
+            self._hide_table_row(self._running_name, self._running_value)
+            running = self.running_points(0.0)
+        else:
+            running = self.running_points(self._lap_seconds)
+            self._show_table_row(
+                self._running_name,
+                self._running_value,
+                next_row,
+                "走行ポイント",
+                f"{running:.1f}",
+            )
+            next_row = 1
         entries = self._score_table_entries()
         subtotal = sum(points for _, points in entries)
         for index, (name_label, value_label) in enumerate(self._item_rows):
             if index < len(entries):
                 name, points = entries[index]
-                self._show_table_row(name_label, value_label, index, name, str(points))
+                self._show_table_row(name_label, value_label, next_row + index, name, str(points))
             else:
                 self._hide_table_row(name_label, value_label)
-        summary_row = len(entries)
+        summary_row = next_row + len(entries)
         if self._result_visible:
             self._subtotal_rule.grid(
                 row=summary_row, column=0, columnspan=2, sticky="ew", pady=(6, 4)
             )
-            self._show_table_row(
-                self._subtotal_name, self._subtotal_value, summary_row + 1, "小計", str(subtotal)
-            )
-            lap_seconds = 0.0 if self._lap_seconds is None else self._lap_seconds
-            result = self.calculate_result(lap_seconds, subtotal)
+            result = self.calculate_result(running, subtotal)
             self._show_table_row(
                 self._result_name,
                 self._result_value,
-                summary_row + 2,
+                summary_row + 1,
                 "リザルトポイント",
                 f"{result:.1f}",
             )
         else:
             if self._subtotal_rule.winfo_manager():
                 self._subtotal_rule.grid_remove()
-            self._hide_table_row(self._subtotal_name, self._subtotal_value)
             self._hide_table_row(self._result_name, self._result_value)
         self._apply_score_colors()
 
@@ -662,7 +662,7 @@ class Stating:
         background = self._display_background
         self.score_table.configure(background=background)
         self._subtotal_rule.configure(background=self.NORMAL_FOREGROUND)
-        for name_label, value_label in (*self._item_rows, (self._subtotal_name, self._subtotal_value)):
+        for name_label, value_label in ((self._running_name, self._running_value), *self._item_rows):
             for label in (name_label, value_label):
                 label.configure(background=background, foreground=self.NORMAL_FOREGROUND)
         for label in (self._result_name, self._result_value):
@@ -800,7 +800,6 @@ class Stating:
         self.content.configure(background=background)
         self.timer_label.configure(background=background, foreground=foreground)
         self.lap_label.configure(background=background, foreground=self.NORMAL_FOREGROUND)
-        self.flying_label.configure(background=background, foreground=self.NORMAL_FOREGROUND)
         self._apply_score_colors()
 
     def _resize_font(self, event: tk.Event) -> None:
@@ -844,7 +843,6 @@ class Stating:
             )
             self.timer_label.grid(row=0, column=0, sticky="")
         self.lap_label.configure(font=("Arial", lap_display_size, "bold"))
-        self.flying_label.configure(font=("Yu Gothic UI", point_size, "bold"))
         for label in self._table_labels:
             label.configure(font=("Yu Gothic UI", point_size, "bold"))
         result_font = ("Yu Gothic UI", lap_display_size, "bold")
@@ -869,7 +867,8 @@ class Stating:
     def _fit_point_font(self, remaining_height: int, width_limit: int) -> int:
         """得点表を含む行が縦幅と横幅に収まる文字サイズを返す。"""
         samples = (
-            self.FLYING_START_TEXT,
+            f"走行ポイント  {self.running_points(float(self.MAX_SECONDS)):.1f}ポイント",
+            f"フライングスタート  {self.FLYING_START_POINTS}",
             f"チェックポイント到達\u3000{self.CHECKPOINT_MAX} 箇所  {self.CHECKPOINT_MAX * self.CHECKPOINT_POINTS}",
             "リザルトポイント  -85.0",
             self.format_rally(self.CHECKPOINT_MAX),
