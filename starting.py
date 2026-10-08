@@ -278,6 +278,7 @@ class Stating:
         )
         self.score_table.grid(row=2, column=0, sticky="ew")
         self._running_name, self._running_value = self._make_table_row()
+        self._running_fraction = self._make_fraction_label()
         self._item_rows = [self._make_table_row() for _ in range(8)]
         self._subtotal_rule = tk.Frame(
             self.score_table,
@@ -291,6 +292,7 @@ class Stating:
             label
             for pair in (
                 (self._running_name, self._running_value),
+                (self._running_fraction, self._running_fraction),
                 *self._item_rows,
                 (self._result_name, self._result_value),
             )
@@ -321,6 +323,20 @@ class Stating:
             anchor="e",
         )
         return name_label, value_label
+
+    def _make_fraction_label(self) -> tk.Label:
+        """小数点以下を、整数の得点の右端から続ける。"""
+        return tk.Label(
+            self.score_table,
+            background=self.NORMAL_BACKGROUND,
+            foreground=self.NORMAL_FOREGROUND,
+            font=("Yu Gothic UI", 24, "bold"),
+            borderwidth=0,
+            highlightthickness=0,
+            padx=0,
+            pady=0,
+            anchor="w",
+        )
 
     @classmethod
     def parse_seconds(cls, value: str) -> int:
@@ -596,16 +612,21 @@ class Stating:
         next_row = 0
         if self._lap_seconds is None:
             self._hide_table_row(self._running_name, self._running_value)
+            if self._running_fraction.winfo_manager():
+                self._running_fraction.grid_remove()
             running = self.running_points(0.0)
         else:
             running = self.running_points(self._lap_seconds)
+            whole, fraction = f"{running:.1f}".split(".", 1)
             self._show_table_row(
                 self._running_name,
                 self._running_value,
                 next_row,
                 "走行ポイント",
-                f"{running:.1f}",
+                whole,
             )
+            self._running_fraction.configure(text=f".{fraction}")
+            self._running_fraction.grid(row=next_row, column=2, sticky="w")
             next_row = 1
         entries = self._score_table_entries()
         subtotal = sum(points for _, points in entries)
@@ -618,7 +639,7 @@ class Stating:
         summary_row = next_row + len(entries)
         if self._result_visible:
             self._subtotal_rule.grid(
-                row=summary_row, column=0, columnspan=2, sticky="ew", pady=(6, 4)
+                row=summary_row, column=0, columnspan=3, sticky="ew", pady=(6, 4)
             )
             result = self.calculate_result(running, subtotal)
             self._show_table_row(
@@ -662,7 +683,11 @@ class Stating:
         background = self._display_background
         self.score_table.configure(background=background)
         self._subtotal_rule.configure(background=self.NORMAL_FOREGROUND)
-        for name_label, value_label in ((self._running_name, self._running_value), *self._item_rows):
+        for name_label, value_label in (
+            (self._running_name, self._running_value),
+            (self._running_fraction, self._running_fraction),
+            *self._item_rows,
+        ):
             for label in (name_label, value_label):
                 label.configure(background=background, foreground=self.NORMAL_FOREGROUND)
         for label in (self._result_name, self._result_value):
