@@ -198,7 +198,7 @@ class Stating:
 
         rally_row = tk.Frame(frame)
         rally_row.grid(row=11, column=0, columnspan=4, sticky="ew", pady=(4, 4))
-        tk.Label(rally_row, text="ETラリー.1周回").pack(side="left")
+        tk.Label(rally_row, text="ETラリー（周回）").pack(side="left")
         self.rally_var = tk.StringVar(value=str(self.CHECKPOINT_MIN))
         self.rally_combo = ttk.Combobox(
             rally_row,
@@ -340,12 +340,12 @@ class Stating:
     @classmethod
     def format_checkpoint(cls, count: int) -> str:
         points = count * cls.CHECKPOINT_POINTS
-        return f"チェックポイント到達\u3000{count} 箇所\u3000 {points}ポイント"
+        return f"チェックポイント到達\u3000{count} 本\u3000 {points}ポイント"
 
     @classmethod
     def format_rally(cls, count: int) -> str:
         points = count * cls.RALLY_POINTS
-        return f"ETラリー.{count}周回\u3000 {points}ポイント"
+        return f"ETラリー {count}周回\u3000 {points}ポイント"
 
     @staticmethod
     def running_points(lap_seconds: float) -> float:
@@ -572,7 +572,7 @@ class Stating:
         checkpoint_count = self._checkpoint_count()
         checkpoint_points = checkpoint_count * self.CHECKPOINT_POINTS
         if checkpoint_points > 0:
-            entries.append((f"チェックポイント到達\u3000{checkpoint_count} 箇所", checkpoint_points))
+            entries.append((f"チェックポイント到達\u3000{checkpoint_count} 本", checkpoint_points))
         if self._lap_seconds is not None:
             entries.append(("Lapゲート到達", self.LAP_GATE_POINTS))
         if self._finish_confirmed:
@@ -586,7 +586,7 @@ class Stating:
         rally_count = self._rally_count()
         rally_points = rally_count * self.RALLY_POINTS
         if rally_points > 0:
-            entries.append((f"ETラリー.{rally_count}周回", rally_points))
+            entries.append((f"ETラリー {rally_count}周回", rally_points))
         return entries
 
     def _refresh_score_table(self, *_args: object) -> None:
@@ -869,7 +869,7 @@ class Stating:
         samples = (
             f"走行ポイント  {self.running_points(float(self.MAX_SECONDS)):.1f}ポイント",
             f"フライングスタート  {self.FLYING_START_POINTS}",
-            f"チェックポイント到達\u3000{self.CHECKPOINT_MAX} 箇所  {self.CHECKPOINT_MAX * self.CHECKPOINT_POINTS}",
+            f"チェックポイント到達\u3000{self.CHECKPOINT_MAX} 本  {self.CHECKPOINT_MAX * self.CHECKPOINT_POINTS}",
             "リザルトポイント  -85.0",
             self.format_rally(self.CHECKPOINT_MAX),
         )
