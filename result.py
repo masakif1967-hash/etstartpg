@@ -7,12 +7,25 @@ import json
 from pathlib import Path
 import sys
 from typing import Any
+import xml.etree.ElementTree as ET
+from zipfile import ZIP_DEFLATED, ZipFile
 
 
 RESULT_FILE = Path(__file__).resolve().parent / "result.json"
+PRESENTATION_FILE = Path(__file__).resolve().parent / "結果発表.pptx"
 GAME_SCORE_BASE = 73.0
 MODEL_SCORE_WEIGHT = 7.0
 GAME_SCORE_WEIGHT = 3.0
+GAME_RANKING_OBJECT_IDS = ("64", "65", "66")
+TOTAL_RANKING_OBJECT_IDS = ("71", "72", "73")
+PPTX_NAMESPACES = {
+    "a": "http://schemas.openxmlformats.org/drawingml/2006/main",
+    "p": "http://schemas.openxmlformats.org/presentationml/2006/main",
+    "r": "http://schemas.openxmlformats.org/officeDocument/2006/relationships",
+}
+
+for prefix, uri in PPTX_NAMESPACES.items():
+    ET.register_namespace(prefix, uri)
 
 
 @dataclass(frozen=True)
@@ -100,9 +113,17 @@ def format_score(score: float) -> str:
     return f"{score:.2f}"
 
 
+def game_ranking(results: list[TeamResult]) -> list[TeamResult]:
+    return sorted(results, key=lambda team: team.game_score_av, reverse=True)
+
+
+def total_ranking(results: list[TeamResult]) -> list[TeamResult]:
+    return sorted(results, key=lambda team: team.total_score, reverse=True)
+
+
 def print_game_ranking(results: list[TeamResult]) -> None:
     print("game順位")
-    for rank, result in enumerate(sorted(results, key=lambda team: team.game_score_av, reverse=True), start=1):
+    for rank, result in enumerate(game_ranking(results), start=1):
         print(
             rank,
             result.name,
@@ -115,7 +136,7 @@ def print_game_ranking(results: list[TeamResult]) -> None:
 
 def print_total_ranking(results: list[TeamResult]) -> None:
     print("総合順位")
-    for rank, result in enumerate(sorted(results, key=lambda team: team.total_score, reverse=True), start=1):
+    for rank, result in enumerate(total_ranking(results), start=1):
         print(
             rank,
             result.name,
@@ -124,6 +145,87 @@ def print_total_ranking(results: list[TeamResult]) -> None:
             format_score(result.total_score),
             sep="\t",
         )
+
+
+def set_shape_text(shape: ET.Element, text: str, target_name: str) -> None:
+    text_runs = shape.findall(".//a:t", PPTX_NAMESPACES)
+    if not text_runs:
+        raise ValueError(f"{target_name} に書き換え可能なテキストがありません。")
+    text_runs[0].text = text
+    for text_run in text_runs[1:]:
+        text_run.text = ""
+
+
+def set_shape_text_by_id(root: ET.Element, object_id: str, text: str) -> bool:
+    for shape in root.findall(".//p:sp", PPTX_NAMESPACES):
+        c_nv_pr = shape.find(".//p:cNvPr", PPTX_NAMESPACES)
+        if c_nv_pr is None or c_nv_pr.get("id") != object_id:
+            continue
+
+        set_shape_text(shape, text, f"オブジェクトID {object_id}")
+        return True
+    return False
+
+
+def set_team_text_by_position(root: ET.Element, names: list[str]) -> None:
+    text_shapes = [
+        shape
+        for shape in root.findall(".//p:sp", PPTX_NAMESPACES)
+        if shape.findall(".//a:t", PPTX_NAMESPACES)
+    ]
+    if len(text_shapes) < len(names):
+        raise ValueError("チーム名を書き込むテキストオブジェクトが足りません。")
+
+    # PowerPointで再保存されるとオブジェクトIDが変わる場合があるため、
+    # このテンプレートでチーム名欄に該当する末尾3つのテキスト図形へ書き込む。
+    for shape, name in zip(text_shapes[-len(names) :], names):
+        set_shape_text(shape, name, "チーム名欄")
+
+
+def update_slide_text(zip_file: ZipFile, slide_path: str, replacements: dict[str, str]) -> bytes:
+    root = ET.fromstring(zip_file.read(slide_path))
+    missing_ids: list[str] = []
+    for object_id, text in replacements.items():
+        if not set_shape_text_by_id(root, object_id, text):
+            missing_ids.append(object_id)
+    if missing_ids:
+        set_team_text_by_position(root, list(replacements.values()))
+    return ET.tostring(root, encoding="utf-8", xml_declaration=True)
+
+
+def write_presentation_rankings(
+    results: list[TeamResult],
+    path: Path = PRESENTATION_FILE,
+) -> None:
+    if len(results) < 3:
+        raise ValueError("結果発表.pptx に書き込むにはチームが3件以上必要です。")
+    if not path.is_file():
+        raise ValueError(f"{path.name} が見つかりません。")
+
+    game_names = [team.name for team in game_ranking(results)[:3]]
+    total_names = [team.name for team in total_ranking(results)[:3]]
+    replacements_by_slide = {
+        "ppt/slides/slide2.xml": dict(zip(GAME_RANKING_OBJECT_IDS, game_names)),
+        "ppt/slides/slide3.xml": dict(zip(TOTAL_RANKING_OBJECT_IDS, total_names)),
+    }
+    temp_path = path.with_suffix(path.suffix + ".tmp")
+
+    try:
+        with ZipFile(path, "r") as source, ZipFile(temp_path, "w", ZIP_DEFLATED) as destination:
+            updated_slides = {
+                slide_path: update_slide_text(source, slide_path, replacements)
+                for slide_path, replacements in replacements_by_slide.items()
+            }
+            for item in source.infolist():
+                content = updated_slides.get(item.filename)
+                if content is None:
+                    content = source.read(item.filename)
+                destination.writestr(item, content)
+        temp_path.replace(path)
+    except Exception:
+        if temp_path.exists():
+            temp_path.unlink()
+        raise
 
 
 def main() -> int:
@@ -135,6 +237,11 @@ def main() -> int:
 
     print_game_ranking(results)
     print_total_ranking(results)
+    try:
+        write_presentation_rankings(results)
+    except ValueError as error:
+        print(error, file=sys.stderr)
+        return 1
     return 0
 
 
