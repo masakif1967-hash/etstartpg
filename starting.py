@@ -38,6 +38,8 @@ class Stating:
     # 添付音源の末尾「Go」の発話長（開始位置から言い終わりまで）。
     LAST_GO_DURATION_SECONDS = 0.3
     AUDIO_FILE_NAME = "ETロボコン120秒（スタート合図から120秒タイムアップ）.mp4"
+    END_SOUND_FILE_NAME = "TheEnd.mp3"
+    GOAL_SOUND_FILE_NAME = "Goal.mp3"
     SETTINGS_FILE_NAME = "starting.ini"
     TEAM_FOREGROUND = "orange"
     NORMAL_BACKGROUND = "black"
@@ -87,6 +89,10 @@ class Stating:
         self._cue_seconds: Optional[float] = None
         self._audio_sound: Optional[pygame.mixer.Sound] = None
         self._audio_channel: Optional[pygame.mixer.Channel] = None
+        self._end_sound: Optional[pygame.mixer.Sound] = None
+        self._end_channel: Optional[pygame.mixer.Channel] = None
+        self._goal_sound: Optional[pygame.mixer.Sound] = None
+        self._goal_channel: Optional[pygame.mixer.Channel] = None
         self._wav_path: Optional[Path] = None
         self._lap_seconds: Optional[float] = None
         self._display_width = 640
@@ -94,6 +100,7 @@ class Stating:
         self._finish_after_id: Optional[str] = None
         self._finish_pending = False
         self._finish_confirmed = False
+        self._time_up_deferred = False
         self._result_visible = False
         self._save_enabled = False
         self._started_at: Optional[datetime] = None
@@ -542,6 +549,16 @@ class Stating:
             )
             self._audio_sound = pygame.mixer.Sound(str(self._wav_path))
             self._audio_sound.set_volume(self.DEFAULT_VOLUME / 100)
+            end_sound_path = Path(__file__).resolve().parent / "音声データ" / self.END_SOUND_FILE_NAME
+            if not end_sound_path.is_file():
+                raise OSError(f"終了音声ファイルが見つかりません: {end_sound_path}")
+            self._end_sound = pygame.mixer.Sound(str(end_sound_path))
+            self._end_sound.set_volume(self.DEFAULT_VOLUME / 100)
+            goal_sound_path = Path(__file__).resolve().parent / "音声データ" / self.GOAL_SOUND_FILE_NAME
+            if not goal_sound_path.is_file():
+                raise OSError(f"フィニッシュ音声ファイルが見つかりません: {goal_sound_path}")
+            self._goal_sound = pygame.mixer.Sound(str(goal_sound_path))
+            self._goal_sound.set_volume(self.DEFAULT_VOLUME / 100)
             self._audio_available = True
         except (OSError, subprocess.CalledProcessError, pygame.error, ValueError) as error:
             self._audio_error = f"MP4の読み込みに失敗しました: {error}"
@@ -595,6 +612,7 @@ class Stating:
         self._timer_started_at = None
         self._cancel_scheduled_updates()
         self._finish_confirmed = False
+        self._time_up_deferred = False
         self._result_visible = False
         self._save_enabled = False
         self._started_at = None
@@ -659,8 +677,12 @@ class Stating:
 
     def cancel_finish(self) -> None:
         """待機中の確定を止め、表示中のフィニィッシュ行も消す。"""
+        should_play_end_sound = self._time_up_deferred
         self._cancel_finish_wait()
         self._finish_confirmed = False
+        if should_play_end_sound:
+            self._time_up_deferred = False
+            self._play_end_sound()
         self._refresh_score_table()
 
     def _confirm_finish(self) -> None:
@@ -669,8 +691,10 @@ class Stating:
             return
         self._finish_pending = False
         self._finish_confirmed = True
+        self._time_up_deferred = False
         self._refresh_score_table()
         self.stop()
+        self._play_goal_sound()
 
     def _cancel_finish_wait(self) -> None:
         self._finish_pending = False
@@ -990,8 +1014,16 @@ class Stating:
         volume = max(0, min(100, int(float(value))))
         if self._audio_sound is not None:
             self._audio_sound.set_volume(volume / 100)
+        if self._end_sound is not None:
+            self._end_sound.set_volume(volume / 100)
+        if self._goal_sound is not None:
+            self._goal_sound.set_volume(volume / 100)
         if self._audio_channel is not None:
             self._audio_channel.set_volume(volume / 100)
+        if self._end_channel is not None:
+            self._end_channel.set_volume(volume / 100)
+        if self._goal_channel is not None:
+            self._goal_channel.set_volume(volume / 100)
 
     def _begin_countup(self) -> None:
         self._cue_after_id = None
@@ -1009,6 +1041,11 @@ class Stating:
             self._timer_started_at = None
             self._after_id = None
             self._stop_audio()
+            if self._finish_pending:
+                self._time_up_deferred = True
+            else:
+                self._time_up_deferred = False
+                self._play_end_sound()
             self._apply_control_access("all")
             self._show_settled_time()
             return
@@ -1180,6 +1217,33 @@ class Stating:
         if self._audio_channel is not None:
             self._audio_channel.stop()
             self._audio_channel = None
+        if self._end_channel is not None:
+            self._end_channel.stop()
+            self._end_channel = None
+        if self._goal_channel is not None:
+            self._goal_channel.stop()
+            self._goal_channel = None
+
+    def _play_end_sound(self) -> None:
+        self._end_channel = self._play_notification_sound(self._end_sound)
+
+    def _play_goal_sound(self) -> None:
+        self._goal_channel = self._play_notification_sound(self._goal_sound)
+
+    def _play_notification_sound(
+        self, sound: Optional[pygame.mixer.Sound]
+    ) -> Optional[pygame.mixer.Channel]:
+        if not self._audio_available or sound is None:
+            return
+        try:
+            sound.set_volume(self.volume_var.get() / 100)
+            channel = sound.play()
+            if channel is not None:
+                channel.set_volume(self.volume_var.get() / 100)
+            return channel
+        except pygame.error:
+            self._audio_available = False
+            return None
 
     def _cleanup_wav(self) -> None:
         if self._wav_path is not None:
