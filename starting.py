@@ -668,8 +668,15 @@ class Stating:
         self._apply_fonts()
 
     def press_finish(self) -> None:
-        """フィニィッシュ後、3秒間キャンセルされなければポイントを表示する。"""
+        """走行中は3秒待って、停止中は即時にフィニィッシュ成立とする。"""
         if self._finish_confirmed:
+            return
+        if not self._running or self._timer_started_at is None:
+            self._cancel_finish_wait()
+            self._finish_pending = False
+            self._finish_confirmed = True
+            self._time_up_deferred = False
+            self._refresh_score_table()
             return
         self._cancel_finish_wait()
         self._finish_pending = True
