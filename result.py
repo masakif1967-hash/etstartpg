@@ -16,8 +16,8 @@ PRESENTATION_FILE = Path(__file__).resolve().parent / "結果発表.pptx"
 GAME_SCORE_BASE = 73.0
 MODEL_SCORE_WEIGHT = 7.0
 GAME_SCORE_WEIGHT = 3.0
-GAME_RANKING_OBJECT_IDS = ("64", "65", "66")
-TOTAL_RANKING_OBJECT_IDS = ("71", "72", "73")
+GAME_RANKING_OBJECT_IDS = ("8", "9", "10")
+TOTAL_RANKING_OBJECT_IDS = ("15", "16", "17")
 PPTX_NAMESPACES = {
     "a": "http://schemas.openxmlformats.org/drawingml/2006/main",
     "p": "http://schemas.openxmlformats.org/presentationml/2006/main",
@@ -205,8 +205,8 @@ def write_presentation_rankings(
     game_names = [team.name for team in game_ranking(results)[:3]]
     total_names = [team.name for team in total_ranking(results)[:3]]
     replacements_by_slide = {
-        "ppt/slides/slide2.xml": dict(zip(GAME_RANKING_OBJECT_IDS, game_names)),
-        "ppt/slides/slide3.xml": dict(zip(TOTAL_RANKING_OBJECT_IDS, total_names)),
+        "ppt/slides/slide4.xml": dict(zip(GAME_RANKING_OBJECT_IDS, game_names)),
+        "ppt/slides/slide5.xml": dict(zip(TOTAL_RANKING_OBJECT_IDS, total_names)),
     }
     temp_path = path.with_suffix(path.suffix + ".tmp")
 

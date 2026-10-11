@@ -1,0 +1,22 @@
+{
+  "teams": [
+    {
+      "TeamName": "KAMGAWorks",
+      "model_score": 94.0,
+      "gameL_score": 10.0,
+      "gameR_score": 10.0
+    },
+    {
+      "TeamName": "かもがわデンジャラス",
+      "model_score": 87.5,
+      "gameL_score": 10.0,
+      "gameR_score": 10.0
+    },
+    {
+      "TeamName": "かもがわモーターズ",
+      "model_score": 96.5,
+      "gameL_score": 10.0,
+      "gameR_score": 10.0
+    }
+  ]
+}
