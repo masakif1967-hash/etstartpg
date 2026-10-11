@@ -5,6 +5,7 @@ from __future__ import annotations
 from array import array
 import math
 import os
+from pathlib import Path
 import time
 import tkinter as tk
 from tkinter import messagebox
@@ -26,8 +27,7 @@ class Calibration:
     DEFAULT_FINISHED_VOLUME = 30
     TICK_FREQUENCY_HZ = 1000
     TICK_DURATION_MS = 150
-    FINISHED_FREQUENCY_HZ = 200
-    FINISHED_DURATION_MS = 900
+    FINISHED_SOUND_FILE = Path(__file__).resolve().parent / "音声データ" / "TheEnd.mp3"
     SAMPLE_RATE = 44_100
     MIXER_BUFFER_SIZE = 512
     NORMAL_FOREGROUND = "white"
@@ -83,7 +83,7 @@ class Calibration:
             variable=self.tick_volume_var,
         ).grid(row=3, column=0, columnspan=4, sticky="ew", pady=(0, 6))
 
-        tk.Label(frame, text="終了ブザー音量").grid(row=4, column=0, columnspan=4, sticky="w")
+        tk.Label(frame, text="終了音声音量").grid(row=4, column=0, columnspan=4, sticky="w")
         self.finished_volume_var = tk.IntVar(value=self.DEFAULT_FINISHED_VOLUME)
         tk.Scale(
             frame, from_=self.MIN_VOLUME, to=self.MAX_VOLUME, orient="horizontal",
@@ -279,18 +279,14 @@ class Calibration:
             self._tick_sound = self._create_tone(
                 self.TICK_FREQUENCY_HZ, self.TICK_DURATION_MS, waveform="square"
             )
-            self._finished_sound = self._create_tone(
-                self.FINISHED_FREQUENCY_HZ,
-                self.FINISHED_DURATION_MS,
-                waveform="square",
-            )
+            self._finished_sound = pygame.mixer.Sound(str(self.FINISHED_SOUND_FILE))
             # 無音をループ再生してBluetooth出力の再接続・音量ランプを防ぐ。
             self._silence_sound = pygame.mixer.Sound(
                 buffer=array("h", [0]) * self.SAMPLE_RATE
             )
             self._silence_channel = self._silence_sound.play(loops=-1)
             self._audio_available = True
-        except pygame.error:
+        except (OSError, pygame.error):
             self._audio_available = False
 
     def _create_tone(
@@ -310,7 +306,7 @@ class Calibration:
         self._play_sound(self._tick_sound, self.tick_volume_var.get())
 
     def _announce_finished(self) -> None:
-        """終了を一度だけブザー音で通知する。"""
+        """終了を一度だけ TheEnd.mp3 で通知する。"""
         if self._finished_announced:
             return
         self._finished_announced = True
