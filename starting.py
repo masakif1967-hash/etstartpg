@@ -95,6 +95,8 @@ class Stating:
         self._goal_channel: Optional[pygame.mixer.Channel] = None
         self._wav_path: Optional[Path] = None
         self._lap_seconds: Optional[float] = None
+        self._lap_recorded_once = False
+        self._updating_lap_time_var = False
         self._display_width = 640
         self._display_height = 360
         self._finish_after_id: Optional[str] = None
@@ -199,6 +201,20 @@ class Stating:
 
         self.lap_button = tk.Button(frame, text="Lap", command=self.record_lap)
         self.lap_button.grid(row=9, column=0, columnspan=4, sticky="ew", pady=(12, 0))
+        lap_edit_row = tk.Frame(frame)
+        lap_edit_row.grid(row=10, column=0, columnspan=4, sticky="ew", pady=(4, 0))
+        tk.Label(lap_edit_row, text="Lap Time:").pack(side="left")
+        self.lap_time_var = tk.StringVar(value="")
+        self.lap_time_entry = tk.Entry(lap_edit_row, textvariable=self.lap_time_var, width=8, state=tk.DISABLED)
+        self.lap_time_entry.pack(side="left", padx=(8, 8), fill="x", expand=True)
+        self.lap_time_var.trace_add("write", self._on_lap_time_changed)
+        self.lap_cancel_button = tk.Button(
+            lap_edit_row,
+            text="Lapキャンセル",
+            command=self.cancel_lap,
+            state=tk.DISABLED,
+        )
+        self.lap_cancel_button.pack(side="left")
         self._build_score_controls(frame)
         self._bind_lap_key(self.root)
         for widget in self._control_tab_order():
@@ -215,7 +231,7 @@ class Stating:
             variable=self.bottle_var,
             command=self._refresh_score_table,
         )
-        self.bottle_check.grid(row=10, column=0, columnspan=4, sticky="w", pady=(12, 4))
+        self.bottle_check.grid(row=11, column=0, columnspan=4, sticky="w", pady=(12, 4))
 
         self.delivery_var = tk.BooleanVar(value=False)
         self.delivery_check = tk.Checkbutton(
@@ -224,7 +240,7 @@ class Stating:
             variable=self.delivery_var,
             command=self._refresh_score_table,
         )
-        self.delivery_check.grid(row=11, column=0, columnspan=4, sticky="w", pady=(4, 4))
+        self.delivery_check.grid(row=12, column=0, columnspan=4, sticky="w", pady=(4, 4))
 
         self.color_var = tk.BooleanVar(value=False)
         self.color_check = tk.Checkbutton(
@@ -233,10 +249,10 @@ class Stating:
             variable=self.color_var,
             command=self._refresh_score_table,
         )
-        self.color_check.grid(row=12, column=0, columnspan=4, sticky="w", pady=(4, 4))
+        self.color_check.grid(row=13, column=0, columnspan=4, sticky="w", pady=(4, 4))
 
         rally_row = tk.Frame(frame)
-        rally_row.grid(row=13, column=0, columnspan=4, sticky="ew", pady=(4, 4))
+        rally_row.grid(row=14, column=0, columnspan=4, sticky="ew", pady=(4, 4))
         tk.Label(rally_row, text="ETラリー（周回）").pack(side="left")
         self.rally_var = tk.StringVar(value=str(self.CHECKPOINT_MIN))
         self.rally_combo = ttk.Combobox(
@@ -249,18 +265,18 @@ class Stating:
         self.rally_combo.pack(side="left", padx=(8, 0))
 
         self.finish_button = tk.Button(frame, text="フィニィッシュ", command=self.press_finish)
-        self.finish_button.grid(row=14, column=0, columnspan=4, sticky="ew", pady=(12, 4))
+        self.finish_button.grid(row=15, column=0, columnspan=4, sticky="ew", pady=(12, 4))
         self.finish_cancel_button = tk.Button(
             frame, text="フィニィッシュキャンセル", command=self.cancel_finish
         )
-        self.finish_cancel_button.grid(row=15, column=0, columnspan=4, sticky="ew", pady=(4, 4))
+        self.finish_cancel_button.grid(row=16, column=0, columnspan=4, sticky="ew", pady=(4, 4))
 
         self.result_button = tk.Button(
             frame, text="リザルトポイント", command=self.show_result_points
         )
-        self.result_button.grid(row=16, column=0, columnspan=4, sticky="ew", pady=(12, 0))
+        self.result_button.grid(row=17, column=0, columnspan=4, sticky="ew", pady=(12, 0))
         self.save_button = tk.Button(frame, text="保存", command=self.save_display)
-        self.save_button.grid(row=17, column=0, columnspan=4, sticky="ew", pady=(12, 0))
+        self.save_button.grid(row=18, column=0, columnspan=4, sticky="ew", pady=(12, 0))
 
     def _build_display_window(self) -> None:
         self.display = tk.Toplevel(self.root)
@@ -618,6 +634,9 @@ class Stating:
         self._started_at = None
         self._time_compact = False
         self._lap_seconds = None
+        self._lap_recorded_once = False
+        self._set_lap_time_text("")
+        self._set_lap_edit_enabled(False)
         if self.lap_label.winfo_manager():
             self.lap_label.configure(text="")
             self.lap_label.grid_remove()
@@ -648,24 +667,75 @@ class Stating:
             return None
 
     def record_lap(self) -> None:
-        """カウントアップ中の経過時間を、表示中タイムの直下へ出す。"""
+        """初回だけ実測し、以降はLap Time入力欄の値で再計算する。"""
         if not self._running or self._timer_started_at is None:
             return
-        elapsed = min(float(self._duration_seconds), self._clock() - self._timer_started_at)
-        self._lap_seconds = elapsed
-        self.lap_label.configure(text=f"LAP TIME:{self.format_elapsed(elapsed)}")
-        if not self.lap_label.winfo_manager():
-            self.lap_label.grid()
-        self._refresh_score_table()
-        self._apply_fonts()
+        if not self._lap_recorded_once:
+            elapsed = min(float(self._duration_seconds), self._clock() - self._timer_started_at)
+            self._lap_recorded_once = True
+            self._set_lap_time_text(self.format_elapsed(elapsed))
+            self._apply_lap_seconds(elapsed)
+            self._set_lap_edit_enabled(True)
+            return
+
+        lap_seconds = self._parse_lap_time_text()
+        if lap_seconds is not None:
+            self._apply_lap_seconds(lap_seconds)
+            self._set_lap_edit_enabled(True)
 
     def _clear_lap(self) -> None:
         self._lap_seconds = None
+        self._lap_recorded_once = False
+        self._set_lap_time_text("")
+        self._set_lap_edit_enabled(False)
         self.lap_label.configure(text="")
         if self.lap_label.winfo_manager():
             self.lap_label.grid_remove()
         self._refresh_score_table()
         self._apply_fonts()
+
+    def cancel_lap(self) -> None:
+        self._lap_seconds = None
+        self._set_lap_edit_enabled(False)
+        self.lap_label.configure(text="")
+        if self.lap_label.winfo_manager():
+            self.lap_label.grid_remove()
+        self._refresh_score_table()
+        self._apply_fonts()
+
+    def _apply_lap_seconds(self, seconds: float) -> None:
+        self._lap_seconds = max(0.0, seconds)
+        self.lap_label.configure(text=f"LAP TIME:{self.format_elapsed(self._lap_seconds)}")
+        if not self.lap_label.winfo_manager():
+            self.lap_label.grid()
+        self._refresh_score_table()
+        self._apply_fonts()
+
+    def _on_lap_time_changed(self, *_args: object) -> None:
+        if self._updating_lap_time_var or str(self.lap_time_entry.cget("state")) == tk.DISABLED:
+            return
+        lap_seconds = self._parse_lap_time_text()
+        if lap_seconds is not None:
+            self._apply_lap_seconds(lap_seconds)
+
+    def _parse_lap_time_text(self) -> Optional[float]:
+        try:
+            value = float(self.lap_time_var.get().strip())
+        except (AttributeError, ValueError):
+            return None
+        return max(0.0, value)
+
+    def _set_lap_time_text(self, value: str) -> None:
+        self._updating_lap_time_var = True
+        try:
+            self.lap_time_var.set(value)
+        finally:
+            self._updating_lap_time_var = False
+
+    def _set_lap_edit_enabled(self, enabled: bool) -> None:
+        state = tk.NORMAL if enabled else tk.DISABLED
+        self.lap_time_entry.configure(state=state)
+        self.lap_cancel_button.configure(state=state)
 
     def press_finish(self) -> None:
         """走行中は3秒待って、停止中は即時にフィニィッシュ成立とする。"""
@@ -955,6 +1025,8 @@ class Stating:
             self.flying_check,
             self.checkpoint_combo,
             self.lap_button,
+            self.lap_time_entry,
+            self.lap_cancel_button,
             self.bottle_check,
             self.delivery_check,
             self.color_check,
@@ -997,6 +1069,8 @@ class Stating:
         for index, widget in enumerate(order):
             if widget is self.save_button:
                 enabled = self._save_enabled and phase != "before_start"
+            elif widget in (self.lap_time_entry, self.lap_cancel_button):
+                enabled = self._lap_seconds is not None and phase != "before_start"
             elif index <= start_index:
                 enabled = True
             elif phase == "before_start":
