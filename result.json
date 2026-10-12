@@ -3,20 +3,20 @@
     {
       "TeamName": "KAMGAWorks",
       "model_score": 94.0,
-      "gameL_score": 15.0,
-      "gameR_score": 10.0
+      "gameL_score": 44.5,
+      "gameR_score": 31.5
     },
     {
       "TeamName": "かもがわデンジャラス",
       "model_score": 87.5,
-      "gameL_score": 20.0,
-      "gameR_score": 10.0
+      "gameL_score": 0.0,
+      "gameR_score": 37.5
     },
     {
       "TeamName": "かもがわモーターズ",
       "model_score": 96.5,
-      "gameL_score": 10.0,
-      "gameR_score": 10.0
+      "gameL_score": 59.5,
+      "gameR_score": 27.5
     }
   ]
 }

@@ -41,6 +41,7 @@ class Stating:
     END_SOUND_FILE_NAME = "TheEnd.mp3"
     GOAL_SOUND_FILE_NAME = "Goal.mp3"
     SETTINGS_FILE_NAME = "starting.ini"
+    RESULT_FILE_NAME = "result.json"
     TEAM_FOREGROUND = "orange"
     NORMAL_BACKGROUND = "black"
     FINISHED_BACKGROUND = "red"
@@ -876,8 +877,8 @@ class Stating:
             messagebox.showerror("保存エラー", "スタート後に保存してください。", parent=self.root)
             return
         try:
-            path = self._write_display_log()
-        except OSError as error:
+            path = self._save_competition_data()
+        except (OSError, ValueError) as error:
             messagebox.showerror("保存エラー", str(error), parent=self.root)
             return
         messagebox.showinfo("保存", f"保存しました。\n{path.name}", parent=self.root)
@@ -886,9 +887,14 @@ class Stating:
         if not self._result_visible or self._started_at is None:
             return
         try:
-            self._write_display_log()
-        except OSError as error:
+            self._save_competition_data()
+        except (OSError, ValueError) as error:
             messagebox.showerror("自動保存エラー", str(error), parent=self.root)
+
+    def _save_competition_data(self) -> Path:
+        log_path = self._write_display_log()
+        self._write_result_json()
+        return log_path
 
     def _write_display_log(self) -> Path:
         self.display.update_idletasks()
@@ -898,6 +904,39 @@ class Stating:
         path = folder / self._log_filename()
         path.write_text(json.dumps(snapshot, ensure_ascii=False, indent=2), encoding="utf-8")
         return path
+
+    def _write_result_json(self) -> None:
+        result_path = Path(__file__).resolve().parent / self.RESULT_FILE_NAME
+        try:
+            data = json.loads(result_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as error:
+            raise ValueError(f"{self.RESULT_FILE_NAME} のJSONが不正です: {error}") from error
+
+        teams = data.get("teams") if isinstance(data, dict) else None
+        if not isinstance(teams, list):
+            raise ValueError(f"{self.RESULT_FILE_NAME} の teams が不正です。")
+
+        team_name = self.team_var.get().strip()
+        field_name = "gameL_score" if self.course_var.get() == "L" else "gameR_score"
+        score = round(self._current_result_points(), 1)
+        for item in teams:
+            if not isinstance(item, dict):
+                continue
+            if str(item.get("TeamName") or "").strip() != team_name:
+                continue
+            if field_name not in item:
+                raise ValueError(f"{team_name} の {field_name} が {self.RESULT_FILE_NAME} にありません。")
+            item[field_name] = score
+            result_path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            return
+
+        raise ValueError(f"{self.RESULT_FILE_NAME} にチーム名が見つかりません: {team_name}")
+
+    def _current_result_points(self) -> float:
+        lap_seconds = self._lap_seconds if self._lap_seconds is not None else float(self.MAX_SECONDS)
+        running = self.running_points(lap_seconds)
+        subtotal = sum(points for _, points in self._score_table_entries())
+        return self.calculate_result(running, subtotal)
 
     def _log_filename(self) -> str:
         """チーム名_コース_スタート年月日時分秒.json（日時は14桁）。"""
