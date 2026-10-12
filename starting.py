@@ -615,6 +615,7 @@ class Stating:
         self._show_settled_time()
 
     def reset(self) -> None:
+        self._auto_save_if_needed()
         self._restore_initial_state()
         self._duration_seconds = self.DEFAULT_SECONDS
         self.seconds_var.set(str(self.DEFAULT_SECONDS))
@@ -874,13 +875,29 @@ class Stating:
         if self._started_at is None:
             messagebox.showerror("保存エラー", "スタート後に保存してください。", parent=self.root)
             return
+        try:
+            path = self._write_display_log()
+        except OSError as error:
+            messagebox.showerror("保存エラー", str(error), parent=self.root)
+            return
+        messagebox.showinfo("保存", f"保存しました。\n{path.name}", parent=self.root)
+
+    def _auto_save_if_needed(self) -> None:
+        if not self._result_visible or self._started_at is None:
+            return
+        try:
+            self._write_display_log()
+        except OSError as error:
+            messagebox.showerror("自動保存エラー", str(error), parent=self.root)
+
+    def _write_display_log(self) -> Path:
         self.display.update_idletasks()
         snapshot = self._display_snapshot()
         folder = Path(__file__).resolve().parent / "log"
         folder.mkdir(parents=True, exist_ok=True)
         path = folder / self._log_filename()
         path.write_text(json.dumps(snapshot, ensure_ascii=False, indent=2), encoding="utf-8")
-        messagebox.showinfo("保存", f"保存しました。\n{path.name}", parent=self.root)
+        return path
 
     def _log_filename(self) -> str:
         """チーム名_コース_スタート年月日時分秒.json（日時は14桁）。"""
@@ -1335,6 +1352,7 @@ class Stating:
             self._wav_path = None
 
     def close(self) -> None:
+        self._auto_save_if_needed()
         self._cancel_finish_wait()
         self._stop_timer()
         self._stop_audio()
